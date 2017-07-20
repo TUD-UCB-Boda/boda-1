@@ -482,10 +482,10 @@ namespace boda
       
       for( uint32_t Kb = 0; Kb != work.dsz("Kb"); ++Kb ) {
 	for( uint32_t Mt = 0; Mt != work.dsz("Mt"); ++Mt ) {
-	  rcg->line( "inner_loop_body", strprintf( "a_r[%s] = a_sm_off[%s];", str(Mt).c_str(), str(Mt+Kb*blk_M).c_str()));
+	  rcg->line( "inner_loop_body", strprintf( "a_r[%s] = a_sm[a_sm_off + %s];", str(Mt).c_str(), str(Mt+Kb*blk_M).c_str()));
 	}
 	for( uint32_t Nt = 0; Nt != work.dsz("Nt"); ++Nt ) {
-	  rcg->line( "inner_loop_body", strprintf( "b_r[%s] = b_sm_off[%s];", str(Nt).c_str(), str(Nt+Kb*blk_N).c_str()));
+	  rcg->line( "inner_loop_body", strprintf( "b_r[%s] = b_sm[b_sm_off + %s];", str(Nt).c_str(), str(Nt+Kb*blk_N).c_str()));
 	  //rcg->line( "inner_loop_body", strprintf( "b_r[%s] = b[k*%%(b_K_stride)+thr_N+%s];", str(Nt).c_str(), str(Nt).c_str() ) );
 	}
 	for( uint32_t Mt = 0; Mt != work.dsz("Mt"); ++Mt ) {
