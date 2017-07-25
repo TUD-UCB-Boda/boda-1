@@ -297,21 +297,16 @@ const uint32_t U32_MAX = 0xffffffff;
 
     
     }
+    
+    // buf and mem of return value must be destroyed/freed
+    vk_buffer_object_t createBufferObject(VkDeviceSize size, VkBufferUsageFlags bufferFlags, VkMemoryPropertyFlags memoryFlags) {
 
-    void copy_nda_to_var (string const &vn, p_nda_t const & nda) {
-
-      // XXX maybe we should use some kind of heuristic to avoid allocating
-      // a new staging buffer everytime - var_to_nda as well
-      vk_var_info_t const & vi = must_find( *vis, vn );
-      assert( nda->dims == vi.dims);
-
-      
       const VkBufferCreateInfo bufferCreateInfo = {
 	VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 	0,
 	0,
-	nda->dims.bytes_sz(),
-	VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+	size,
+	bufferFlags,
 	VK_SHARING_MODE_EXCLUSIVE,
 	1,
 	&queueFamilyIndex
@@ -328,223 +323,8 @@ const uint32_t U32_MAX = 0xffffffff;
       VkMemoryRequirements memReqs;
       vkGetBufferMemoryRequirements(device, buf, &memReqs);
 
-      // host visible memory
-
       for (uint32_t k = 0; k < memProperties.memoryTypeCount; k++) {
-	if ((VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT & memProperties.memoryTypes[k].propertyFlags) &&
-	    (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT & memProperties.memoryTypes[k].propertyFlags) &&
-	    (memReqs.memoryTypeBits & (1 << k))) {
-	  memoryTypeIndex = k;
-	  break;
-	}
-      }
-
-      BAIL_ON_BAD_RESULT(memoryTypeIndex == VK_MAX_MEMORY_TYPES ? VK_ERROR_OUT_OF_HOST_MEMORY : VK_SUCCESS);
-
-      const VkMemoryAllocateInfo memoryAllocateInfo = {
-	VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-	0,
-	nda->dims.bytes_sz(),
-	memoryTypeIndex
-      };
-      VkDeviceMemory devMem;
-      BAIL_ON_BAD_RESULT(vkAllocateMemory(device, &memoryAllocateInfo, 0, &devMem));
-
-      void *devPtr;
-      BAIL_ON_BAD_RESULT(vkMapMemory(device, devMem, 0, nda->dims.bytes_sz(), 0, (void **)&devPtr));
-      memcpy(devPtr, nda->rp_elems(), nda->dims.bytes_sz());
-      vkUnmapMemory(device, devMem);
-
-
-      BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, buf, devMem, 0));
-
-      VkCommandBufferAllocateInfo commandBufferAllocateInfo = {
-	VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-	0,
-	commandPool,
-	VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-	1
-      };
-
-      VkCommandBuffer commandBuffer;
-      BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, &commandBuffer));
-
-      VkCommandBufferBeginInfo commandBufferBeginInfo = {
-	VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-	0,
-	VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-	0
-      };
-
-      BAIL_ON_BAD_RESULT(vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo));
-
-      VkBufferCopy bufferCopy = {0, 0, nda->dims.bytes_sz()};
-      vkCmdCopyBuffer(commandBuffer, buf, vi.bo.buf, 1, &bufferCopy);
-
-
-      BAIL_ON_BAD_RESULT(vkEndCommandBuffer(commandBuffer));
-
-
-      VkSubmitInfo submitInfo = {
-	VK_STRUCTURE_TYPE_SUBMIT_INFO,
-	0,
-	0,
-	0,
-	0,
-	1,
-	&commandBuffer,
-	0,
-	0
-      };
-      BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submitInfo, 0));
-      BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
-
-      // XXX  wait for fence instead of idle -- var_to_nda as well
-      vkFreeMemory(device, devMem, 0);
-      vkDestroyBuffer(device, buf, 0);
-
-    }
-
-    void copy_var_to_nda (p_nda_t const & nda, string const &vn) {
-
-      vk_var_info_t const & vi = must_find( *vis, vn );
-      assert( nda->dims == vi.dims);
-
-      const VkBufferCreateInfo bufferCreateInfo = {
-	VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-	0,
-	0,
-	nda->dims.bytes_sz(),
-	VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-	VK_SHARING_MODE_EXCLUSIVE,
-	1,
-	&queueFamilyIndex
-      };
-  
-      VkBuffer buf;
-      BAIL_ON_BAD_RESULT(vkCreateBuffer(device, &bufferCreateInfo, 0, &buf));
-      
-      // set memoryTypeIndex to an invalid entry in the properties.memoryTypes array
-      uint32_t memoryTypeIndex = VK_MAX_MEMORY_TYPES;
-
-      VkMemoryRequirements memReqs;
-      vkGetBufferMemoryRequirements(device, buf, &memReqs);
-
-      // host visible memory
-
-      for (uint32_t k = 0; k < memProperties.memoryTypeCount; k++) {
-	if ((VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT & memProperties.memoryTypes[k].propertyFlags) &&
-	    (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT & memProperties.memoryTypes[k].propertyFlags) &&
-	    (memReqs.memoryTypeBits & (1 << k))) {
-	  memoryTypeIndex = k;
-	  break;
-	}
-      }
-
-      BAIL_ON_BAD_RESULT(memoryTypeIndex == VK_MAX_MEMORY_TYPES ? VK_ERROR_OUT_OF_HOST_MEMORY : VK_SUCCESS);
-
-      const VkMemoryAllocateInfo memoryAllocateInfo = {
-	VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-	0,
-        memReqs.size,
-	memoryTypeIndex
-      };
-      VkDeviceMemory devMem;
-      BAIL_ON_BAD_RESULT(vkAllocateMemory(device, &memoryAllocateInfo, 0, &devMem));
-
-      BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, buf, devMem, 0));
-
-      VkCommandBufferAllocateInfo commandBufferAllocateInfo = {
-	VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-	0,
-	commandPool,
-	VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-	1
-      };
-
-      VkCommandBuffer commandBuffer;
-      BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, &commandBuffer));
-
-      VkCommandBufferBeginInfo commandBufferBeginInfo = {
-	VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-	0,
-	VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-	0
-      };
-
-      BAIL_ON_BAD_RESULT(vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo));
-
-      VkBufferCopy bufferCopy = {0, 0, nda->dims.bytes_sz()};
-      vkCmdCopyBuffer(commandBuffer, vi.bo.buf, buf, 1, &bufferCopy);
-
-
-      BAIL_ON_BAD_RESULT(vkEndCommandBuffer(commandBuffer));
-
-
-      VkSubmitInfo submitInfo = {
-	VK_STRUCTURE_TYPE_SUBMIT_INFO,
-	0,
-	0,
-	0,
-	0,
-	1,
-	&commandBuffer,
-	0,
-	0
-      };
-      BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submitInfo, 0));
-
-      // XXX use fence
-      BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
-
-    
-      void *devPtr;
-      BAIL_ON_BAD_RESULT(vkMapMemory(device, devMem, 0, nda->dims.bytes_sz(), 0, (void **)&devPtr));
-      memcpy( nda->rp_elems(), devPtr, nda->dims.bytes_sz());
-      vkUnmapMemory(device, devMem);
-      float* res = (float*)nda->rp_elems();
-
-      vkFreeMemory(device, devMem, 0);
-      vkDestroyBuffer(device, buf, 0);
-
-    }
-  
-    p_nda_t get_var_raw_native_pointer( string const & vn ) {
-      // XXX necessary?
-      rt_err( "vk_compute_t: get_var_raw_native_pointer(): not implemented");
-    }
-
-    void create_var_with_dims( string const & vn, dims_t const & dims ) {
-      vk_var_info_t var;
-      
-      const VkBufferCreateInfo bufferCreateInfo = {
-	VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-	0,
-	0,
-	dims.bytes_sz(),
-	// XXX investigate src dst specialization
-	VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-	VK_SHARING_MODE_EXCLUSIVE,
-	1,
-	&queueFamilyIndex
-      };
-
-    
-      VkBuffer buf;
-      BAIL_ON_BAD_RESULT(vkCreateBuffer(device, &bufferCreateInfo, 0, &buf));
-
-      // set memoryTypeIndex to an invalid entry in the properties.memoryTypes array
-      uint32_t memoryTypeIndex = VK_MAX_MEMORY_TYPES;
-
-
-      VkMemoryRequirements memReqs;
-      vkGetBufferMemoryRequirements(device, buf, &memReqs);
-
-      
-      // device local memory
-
-      for (uint32_t k = 0; k < memProperties.memoryTypeCount; k++) {
-	if ((VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT & memProperties.memoryTypes[k].propertyFlags) &&
+	if ((memoryFlags & memProperties.memoryTypes[k].propertyFlags) == memoryFlags &&
 	    (memReqs.memoryTypeBits & (1 << k))) {
 	  memoryTypeIndex = k;
 	  break;
@@ -561,10 +341,113 @@ const uint32_t U32_MAX = 0xffffffff;
       };
       VkDeviceMemory devMem;
       BAIL_ON_BAD_RESULT(vkAllocateMemory(device, &memoryAllocateInfo, 0, &devMem));
-
+ 
       BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, buf, devMem, 0));
+     
+      return {buf, devMem};
+    }
 
-      must_insert( *vis, vn, vk_var_info_t{vk_buffer_object_t{buf, devMem}, dims});
+    void bufferCopy(VkBuffer dst, VkBuffer src, VkDeviceSize size) {
+
+      VkCommandBufferAllocateInfo commandBufferAllocateInfo = {
+	VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+	0,
+	commandPool,
+	VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+	1
+      };
+
+      VkCommandBuffer commandBuffer;
+      BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, &commandBuffer));
+
+      VkCommandBufferBeginInfo commandBufferBeginInfo = {
+	VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+	0,
+	VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+	0
+      };
+
+      BAIL_ON_BAD_RESULT(vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo));
+
+      VkBufferCopy bufferCopy = {0, 0, size};
+      vkCmdCopyBuffer(commandBuffer, src, dst, 1, &bufferCopy);
+
+
+      BAIL_ON_BAD_RESULT(vkEndCommandBuffer(commandBuffer));
+
+
+      VkSubmitInfo submitInfo = {
+	VK_STRUCTURE_TYPE_SUBMIT_INFO,
+	0,
+	0,
+	0,
+	0,
+	1,
+	&commandBuffer,
+	0,
+	0
+      };
+      BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submitInfo, 0));
+      BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
+    }
+
+    
+    void copy_nda_to_var (string const &vn, p_nda_t const & nda) {
+
+      // XXX maybe we should use some kind of heuristic to avoid allocating
+      // a new staging buffer everytime - var_to_nda as well
+      vk_var_info_t const & vi = must_find( *vis, vn );
+      assert( nda->dims == vi.dims);
+      vk_buffer_object_t staging = createBufferObject(nda->dims.bytes_sz(),
+						    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+						    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+      
+      void *devPtr;
+      BAIL_ON_BAD_RESULT(vkMapMemory(device, staging.mem, 0, nda->dims.bytes_sz(), 0, (void **)&devPtr));
+      memcpy(devPtr, nda->rp_elems(), nda->dims.bytes_sz());
+      vkUnmapMemory(device, staging.mem);
+
+      bufferCopy(vi.bo.buf, staging.buf, nda->dims.bytes_sz());
+      // XXX  wait for fence instead of idle -- var_to_nda as well
+      vkFreeMemory(device, staging.mem, 0);
+      vkDestroyBuffer(device, staging.buf, 0);
+
+    }
+
+    void copy_var_to_nda (p_nda_t const & nda, string const &vn) {
+
+      vk_var_info_t const & vi = must_find( *vis, vn );
+      assert( nda->dims == vi.dims);
+
+      vk_buffer_object_t staging = createBufferObject(nda->dims.bytes_sz(),
+						      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+						      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+      bufferCopy(staging.buf, vi.bo.buf, nda->dims.bytes_sz());
+    
+      void *devPtr;
+      BAIL_ON_BAD_RESULT(vkMapMemory(device, staging.mem, 0, nda->dims.bytes_sz(), 0, (void **)&devPtr));
+      memcpy( nda->rp_elems(), devPtr, nda->dims.bytes_sz());
+      vkUnmapMemory(device, staging.mem);
+
+      vkFreeMemory(device, staging.mem, 0);
+      vkDestroyBuffer(device, staging.buf, 0);
+
+    }
+  
+    p_nda_t get_var_raw_native_pointer( string const & vn ) {
+      // XXX necessary?
+      rt_err( "vk_compute_t: get_var_raw_native_pointer(): not implemented");
+    }
+
+    void create_var_with_dims( string const & vn, dims_t const & dims ) {
+      vk_var_info_t var;
+      vk_buffer_object_t bo = createBufferObject(dims.bytes_sz(),
+						 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+						 VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+						 VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+						 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+      must_insert( *vis, vn, vk_var_info_t{bo, dims});
 
       set_var_to_zero( vn );
   
@@ -854,51 +737,13 @@ const uint32_t U32_MAX = 0xffffffff;
 	varIx++;
       }
       assert(varIx == bi.size() -1);
-      
 
-      //create buffer to store ndas into
-      const VkBufferCreateInfo uboCreateInfo = {
-	VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-	0,
-	0,
-	UBO_sz, // XXX handle UBO_sz == 0
-	VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-	VK_SHARING_MODE_EXCLUSIVE,
-	1,
-	&queueFamilyIndex
-      };
-
-      VkBuffer UBOBuffer;
-      BAIL_ON_BAD_RESULT(vkCreateBuffer(device, &uboCreateInfo, 0, &UBOBuffer));
-
-      
-      VkMemoryRequirements memReqs;
-      vkGetBufferMemoryRequirements(device, UBOBuffer, &memReqs);
-
-      uint32_t memoryTypeIndex = VK_MAX_MEMORY_TYPES;
-      // XXX we can use a staging buffer here as well, if it affects perf
-      for (uint32_t k = 0; k < memProperties.memoryTypeCount; k++) {
-	if ((VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT & memProperties.memoryTypes[k].propertyFlags) &&
-	    (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT & memProperties.memoryTypes[k].propertyFlags) &&
-	    UBO_sz < memProperties.memoryHeaps[memProperties.memoryTypes[k].heapIndex].size &&
-	    (memReqs.memoryTypeBits & (1 << k))) {
-	  memoryTypeIndex = k;
-	  break;
-	}
-      }
-      BAIL_ON_BAD_RESULT(memoryTypeIndex == VK_MAX_MEMORY_TYPES ? VK_ERROR_OUT_OF_HOST_MEMORY
-			 : VK_SUCCESS);
-      VkMemoryAllocateInfo memoryAllocateInfo = {
-	VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-	0,
-	memReqs.size,
-	memoryTypeIndex
-      };
-      VkDeviceMemory UBOMemory;
-      BAIL_ON_BAD_RESULT(vkAllocateMemory(device, &memoryAllocateInfo, 0, &UBOMemory));
+      // XXX handle UBO_sz == 0
+      vk_buffer_object_t ubo = createBufferObject(UBO_sz, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+						  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
       char* devPtr;
-      BAIL_ON_BAD_RESULT(vkMapMemory(device, UBOMemory, 0, UBO_sz, 0, (void **) &devPtr));
+      BAIL_ON_BAD_RESULT(vkMapMemory(device, ubo.mem, 0, UBO_sz, 0, (void **) &devPtr));
       size_t offset = 0;
       for (rtc_arg_t arg : UBOArgs) {
 	if (arg.v->rp_elems()) {
@@ -910,12 +755,10 @@ const uint32_t U32_MAX = 0xffffffff;
 	
       }
       
-      vkUnmapMemory(device, UBOMemory);
+      vkUnmapMemory(device, ubo.mem);
       
-      BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, UBOBuffer, UBOMemory, 0));
-
       bi[varIx] = {
-	UBOBuffer,
+	ubo.buf,
 	0,
 	VK_WHOLE_SIZE
       };
@@ -994,8 +837,8 @@ const uint32_t U32_MAX = 0xffffffff;
       BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
       t.stop();
       
-      vkFreeMemory(device, UBOMemory, 0);
-      vkDestroyBuffer(device, UBOBuffer, 0);
+      vkFreeMemory(device, ubo.mem, 0);
+      vkDestroyBuffer(device, ubo.buf, 0);
       vkDestroyDescriptorPool(device, varDescriptorPool, 0);
       vkDestroyDescriptorPool(device, UBODescriptorPool, 0);
       vkDestroyDescriptorSetLayout(device, varLayout, 0);
