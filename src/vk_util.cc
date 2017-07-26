@@ -9,9 +9,6 @@
 
 #define DEBUG
 
-// XXX needs massive refactoring (at least de-duplication, whitespace-errors and matching boda's naming convention)
-// XXX remove several narrowing conversions and other warnings
-
 namespace boda {
   // XXX improve/implement error handling
 #define BAIL_ON_BAD_RESULT(result) \
@@ -32,8 +29,8 @@ const uint32_t U32_MAX = 0xffffffff;
 // XXX figure this out later
 //typedef long long int64_t;
 #define CUCL_GLOBAL_KERNEL
-#define CUCL_DEVICE 
-#define GASQ 
+#define CUCL_DEVICE
+#define GASQ
 #define GLOB_ID_1D (gl_GlobalInvocationID.x)
 #define LOC_ID_1D (gl_LocalInvocationID.x)
 #define GRP_ID_1D (gl_WorkGroupID.x)
@@ -44,16 +41,16 @@ const uint32_t U32_MAX = 0xffffffff;
 // XXX check whether we need both barriers
 #define BARRIER_SYNC groupMemoryBarrier(); barrier();
 
-// note: it seems GLSL doesn't provide powf(), but instead overloads pow() for double and float. 
+// note: it seems GLSL doesn't provide powf(), but instead overloads pow() for double and float.
 // so, we use this as a compatibility wrapper.
 #define powf(v,e) pow(v,e)
 // XXX figure this out later
 //#define store_float_to_rp_half( val, ix, p ) vstore_half( val, ix, p )
 #define store_float_to_rp_float( val, ix, p ) p[ix] = val
 
-#define START_ARG 
+#define START_ARG
 #define END_ARG ;
-#define FLOAT_CAST 
+#define FLOAT_CAST
 
 )rstr";
 
@@ -86,11 +83,11 @@ const uint32_t U32_MAX = 0xffffffff;
   struct vk_compute_t : virtual public nesi, public rtc_compute_t // NESI(help="Vulkan based rtc support",
 			// bases=["rtc_compute_t"], type_id="vk" )
   {
-  
+
     VkInstance instance;
-    
+
     VkDebugReportCallbackEXT debug_report_callback;
-    
+
     VkDevice device;
 
     VkPhysicalDeviceMemoryProperties mem_properties;
@@ -107,7 +104,6 @@ const uint32_t U32_MAX = 0xffffffff;
 
     virtual cinfo_t const * get_cinfo( void ) const; // required declaration for NESI support
 
-  
     static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
 							VkDebugReportFlagsEXT flags,
 							VkDebugReportObjectTypeEXT objType,
@@ -122,9 +118,9 @@ const uint32_t U32_MAX = 0xffffffff;
 
       return VK_FALSE;
     }
-    
+
     void init( void ) {
-    
+
       const VkApplicationInfo application_info = {
 	VK_STRUCTURE_TYPE_APPLICATION_INFO,
 	0,
@@ -171,7 +167,7 @@ const uint32_t U32_MAX = 0xffffffff;
       // Create and register callback.
       BAIL_ON_BAD_RESULT(vk_create_debug_report_callback_EXT(instance, &debug_callback_create_info, NULL, &debug_report_callback));
 #endif
-    
+
       uint32_t physical_device_count = 0;
       BAIL_ON_BAD_RESULT(vkEnumeratePhysicalDevices(instance, &physical_device_count, 0));
 
@@ -193,7 +189,7 @@ const uint32_t U32_MAX = 0xffffffff;
       bool found_queue_family = false;
       for (; queue_family_index < queue_family_count; queue_family_index++) {
 	VkQueueFamilyProperties props = queue_families[queue_family_index];
-      
+
 	if (props.queueCount > 0 && (props.queueFlags & VK_QUEUE_COMPUTE_BIT)) {
 	  found_queue_family = true;
 	  break;
@@ -205,7 +201,6 @@ const uint32_t U32_MAX = 0xffffffff;
       // XXX investigate
       const float queue_priority = 1.0f;
 
-    
       const VkDeviceQueueCreateInfo deviceQueueCreateInfo = {
 	VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
 	0,
@@ -232,9 +227,9 @@ const uint32_t U32_MAX = 0xffffffff;
       BAIL_ON_BAD_RESULT(vkCreateDevice(physical_devices[0], &device_create_info, 0, &device));
 
       vkGetPhysicalDeviceMemoryProperties(physical_devices[0], &mem_properties);
-  
+
       vkGetDeviceQueue(device, queue_family_index, 0, &queue);
-    
+
 
       VkCommandPoolCreateInfo command_pool_create_info = {
 	VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -258,10 +253,10 @@ const uint32_t U32_MAX = 0xffffffff;
       assert (init_done.v);
       timer_t t("vk compile");
       if (func_infos.empty()) return;
-    
+
       for( vect_rtc_func_info_t::const_iterator i = func_infos.begin(); i != func_infos.end(); ++i ) {
 	string src = vk_base_decls + get_rtc_base_decls() + i->func_src;
-	
+
 	if( gen_src ) {
 	  ensure_is_dir( gen_src_output_dir.exp, 1 );
 	  p_ostream out = ofs_open( strprintf( "%s/%s_%d.glsl", gen_src_output_dir.exp.c_str(), i->func_name.c_str(), (int) (i - func_infos.begin())));
@@ -273,13 +268,13 @@ const uint32_t U32_MAX = 0xffffffff;
 	options.SetOptimizationLevel(shaderc_optimization_level_size);
 	shaderc::SpvCompilationResult module =
 	  compiler.CompileGlslToSpv(src, shaderc_glsl_compute_shader, i->func_name.c_str(), options);
-    
+
 	std::vector<uint32_t> buffer;
 	buffer = {module.cbegin(), module.cend()};
 
 	if (buffer.size() == 0)
 	  BAIL_ON_BAD_RESULT(VK_INCOMPLETE);
-    
+
 	VkShaderModuleCreateInfo shader_module_create_info = {
 	  VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
 	  0,
@@ -292,11 +287,10 @@ const uint32_t U32_MAX = 0xffffffff;
 	BAIL_ON_BAD_RESULT(vkCreateShaderModule(device, &shader_module_create_info, 0, &shader_module));
 
 	must_insert(*kerns, i->func_name, vk_func_info_t{*i, shader_module});
-      }      
+      }
 
-    
     }
-    
+
     // buf and mem of return value must be destroyed/freed
     vk_buffer_info_t create_buffer_info(VkDeviceSize size, VkBufferUsageFlags buffer_flags, VkMemoryPropertyFlags memory_flags) {
 
@@ -311,11 +305,9 @@ const uint32_t U32_MAX = 0xffffffff;
 	&queue_family_index
       };
 
-    
       VkBuffer buf;
       BAIL_ON_BAD_RESULT(vkCreateBuffer(device, &buffer_create_info, 0, &buf));
 
-      
       // set memory_type_index to an invalid entry in the properties.memoryTypes array
       uint32_t memory_type_index = VK_MAX_MEMORY_TYPES;
 
@@ -340,9 +332,9 @@ const uint32_t U32_MAX = 0xffffffff;
       };
       VkDeviceMemory dev_mem;
       BAIL_ON_BAD_RESULT(vkAllocateMemory(device, &memory_allocate_info, 0, &dev_mem));
- 
+
       BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, buf, dev_mem, 0));
-     
+
       return {buf, dev_mem};
     }
 
@@ -371,7 +363,6 @@ const uint32_t U32_MAX = 0xffffffff;
       VkBufferCopy copy = {0, 0, size};
       vkCmdCopyBuffer(command_buffer, src, dst, 1, &copy);
 
-
       BAIL_ON_BAD_RESULT(vkEndCommandBuffer(command_buffer));
 
 
@@ -390,7 +381,6 @@ const uint32_t U32_MAX = 0xffffffff;
       BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
     }
 
-    
     void copy_nda_to_var (string const &vn, p_nda_t const & nda) {
 
       // XXX maybe we should use some kind of heuristic to avoid allocating
@@ -400,7 +390,7 @@ const uint32_t U32_MAX = 0xffffffff;
       vk_buffer_info_t staging = create_buffer_info(nda->dims.bytes_sz(),
 						    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 						    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-      
+
       void *dev_ptr;
       BAIL_ON_BAD_RESULT(vkMapMemory(device, staging.mem, 0, nda->dims.bytes_sz(), 0, (void **)&dev_ptr));
       memcpy(dev_ptr, nda->rp_elems(), nda->dims.bytes_sz());
@@ -422,7 +412,7 @@ const uint32_t U32_MAX = 0xffffffff;
 						      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 						      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
       buffer_copy(staging.buf, vi.bo.buf, nda->dims.bytes_sz());
-    
+
       void *dev_ptr;
       BAIL_ON_BAD_RESULT(vkMapMemory(device, staging.mem, 0, nda->dims.bytes_sz(), 0, (void **)&dev_ptr));
       memcpy( nda->rp_elems(), dev_ptr, nda->dims.bytes_sz());
@@ -432,7 +422,7 @@ const uint32_t U32_MAX = 0xffffffff;
       vkDestroyBuffer(device, staging.buf, 0);
 
     }
-  
+
     p_nda_t get_var_raw_native_pointer( string const & vn ) {
       // XXX necessary?
       rt_err( "vk_compute_t: get_var_raw_native_pointer(): not implemented");
@@ -449,11 +439,10 @@ const uint32_t U32_MAX = 0xffffffff;
       must_insert( *vis, vn, vk_var_info_t{bo, dims});
 
       set_var_to_zero( vn );
-  
+
     }
-  
+
     void create_var_with_dims_as_reshaped_view_of_var( string const & vn, dims_t const & dims, string const & src_vn ) {
-    
       vk_var_info_t const & src_vi = must_find( *vis, src_vn );
       rtc_reshape_check( dims, src_vi.dims );
       must_insert( *vis, vn, vk_var_info_t{ src_vi.bo, dims } );
@@ -472,7 +461,6 @@ const uint32_t U32_MAX = 0xffffffff;
       kerns->clear();
     }
 
-  
     dims_t get_var_dims( string const & vn ) { return must_find( *vis, vn ).dims; }
 
     void set_var_to_zero(string const & vn ) {
@@ -484,7 +472,6 @@ const uint32_t U32_MAX = 0xffffffff;
       free(mem);
     }
 
-  
     vk_compute_t( void ) : vis( new map_str_vk_var_info_t ), kerns( new map_str_vk_func_info_t ) { }
 
     vect_vk_query_pool_t call_evs;
@@ -500,7 +487,7 @@ const uint32_t U32_MAX = 0xffffffff;
       };
       VkQueryPool query_pool;
       call_evs.push_back(query_pool);
-    
+
       vkCreateQueryPool(device, &query_info, 0, &call_evs[call_evs.size()-1]);
 
       return call_evs.size() -1;
@@ -539,14 +526,14 @@ const uint32_t U32_MAX = 0xffffffff;
 	1,
 	VK_SHADER_STAGE_COMPUTE_BIT,
 	0
-      }; 
+      };
       vector<VkDescriptorSetLayoutBinding> var_bindings;
       vector<rtc_arg_t> UBO_args;
       vector<rtc_arg_t> var_args;
       size_t UBO_sz = 0;
 
-    
-      for( vect_string::const_iterator i = vfi.info.arg_names.begin(); i != vfi.info.arg_names.end(); ++i ) {  
+
+      for( vect_string::const_iterator i = vfi.info.arg_names.begin(); i != vfi.info.arg_names.end(); ++i ) {
 	map_str_rtc_arg_t::const_iterator ai = rfc.arg_map.find( *i );
 	if( ai == rfc.arg_map.end() )
 	  { rt_err( strprintf( "vk_compute_t: arg '%s' not found in arg_map for call.\n",
@@ -561,7 +548,6 @@ const uint32_t U32_MAX = 0xffffffff;
 		0});
 	  var_args.push_back(arg);
 	  var_ix++;
-	  
 	} else if (arg.is_nda()) {
 	  UBO_args.push_back(arg);
 	  // GLSL has no datatypes smaller than 4 bytes
@@ -594,7 +580,7 @@ const uint32_t U32_MAX = 0xffffffff;
       std::vector<VkDescriptorSetLayout> layouts;
       layouts.push_back(var_layout);
       layouts.push_back(UBO_layout);
-    
+
       VkPipelineLayoutCreateInfo pipeline_layout_create_info = {
 	VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 	0,
@@ -608,18 +594,13 @@ const uint32_t U32_MAX = 0xffffffff;
       VkPipelineLayout pipeline_layout;
       BAIL_ON_BAD_RESULT(vkCreatePipelineLayout(device, &pipeline_layout_create_info, 0, &pipeline_layout));
 
-      
       size_t const glob_work_sz = rfc.tpb.v*rfc.blks.v;
       size_t const loc_work_sz = rfc.tpb.v;
 
-      
       const VkSpecializationMapEntry entries[] =
       // id,  offset,                size
         {{0, 0, sizeof(size_t)}};
 
-
-
-  
       const VkSpecializationInfo spec_info = {
         1,                  // mapEntryCount
         entries,            // pMapEntries
@@ -627,8 +608,6 @@ const uint32_t U32_MAX = 0xffffffff;
         &loc_work_sz               // pData
       };
 
-    
-    
       VkComputePipelineCreateInfo compute_pipeline_create_info = {
 	VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
 	0,
@@ -650,12 +629,10 @@ const uint32_t U32_MAX = 0xffffffff;
       VkPipeline pipeline;
       BAIL_ON_BAD_RESULT(vkCreateComputePipelines(device, 0, 1, &compute_pipeline_create_info, 0, &pipeline));
 
-  
       VkDescriptorPoolSize var_descriptor_pool_size = {
 	VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 	var_ix
       };
-
 
       VkDescriptorPoolCreateInfo var_descriptor_pool_create_info = {
 	VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -669,7 +646,6 @@ const uint32_t U32_MAX = 0xffffffff;
       VkDescriptorPool var_descriptor_pool;
       BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &var_descriptor_pool_create_info, 0, &var_descriptor_pool));
 
-    
       VkDescriptorSetAllocateInfo var_descriptor_set_allocate_info = {
 	VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 	0,
@@ -751,11 +727,10 @@ const uint32_t U32_MAX = 0xffffffff;
 	} else {
 	  offset += 4;
 	}
-	
       }
-      
+
       vkUnmapMemory(device, ubo.mem);
-      
+
       bi[var_ix] = {
 	ubo.buf,
 	0,
@@ -773,12 +748,11 @@ const uint32_t U32_MAX = 0xffffffff;
 	0,
 	&bi[var_ix],
 	0};
-    
+
       vkUpdateDescriptorSets(device, var_ix+1, descriptor_sets.data(), 0, 0);
 
       uint32_t const call_id = alloc_call_id();
 
-    
       VkCommandBufferAllocateInfo command_buffer_allocate_info = {
 	VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
 	0,
@@ -790,7 +764,6 @@ const uint32_t U32_MAX = 0xffffffff;
       VkCommandBuffer command_buffer;
       BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(device, &command_buffer_allocate_info, &command_buffer));
 
-    
       VkCommandBufferBeginInfo command_buffer_begin_info = {
 	VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 	0,
@@ -803,7 +776,7 @@ const uint32_t U32_MAX = 0xffffffff;
       // XXX use timestamps with queryPool from call_evs here to measure execution time
 
       vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-    
+
       std::vector<VkDescriptorSet> ds;
       ds.push_back(var_descriptor_set);
       ds.push_back(UBO_descriptor_set);
@@ -812,10 +785,8 @@ const uint32_t U32_MAX = 0xffffffff;
 			      pipeline_layout, 0, 2, &ds[0], 0, 0);
       vkCmdDispatch(command_buffer, glob_work_sz/loc_work_sz, 1, 1);
 
-    
       BAIL_ON_BAD_RESULT(vkEndCommandBuffer(command_buffer));
 
-    
       VkQueue queue;
       vkGetDeviceQueue(device, queue_family_index, 0, &queue);
 
@@ -835,7 +806,7 @@ const uint32_t U32_MAX = 0xffffffff;
       BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submit_info, 0));
       BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
       t.stop();
-      
+
       vkFreeMemory(device, ubo.mem, 0);
       vkDestroyBuffer(device, ubo.buf, 0);
       vkDestroyDescriptorPool(device, var_descriptor_pool, 0);
@@ -865,7 +836,6 @@ const uint32_t U32_MAX = 0xffffffff;
     // FIXME: TODO
     void profile_start( void ) { }
     void profile_stop( void ) { }
-  
   };
 
 #include"gen/vk_util.cc.nesi_gen.cc"
