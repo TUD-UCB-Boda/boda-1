@@ -148,9 +148,9 @@ const uint32_t U32_MAX = 0xffffffff;
 	0,
 	0,
 	&application_info,
-	layers.size(),
+	(uint32_t) layers.size(),
 	layers.data(),
-	extensions.size(),
+	(uint32_t) extensions.size(),
 	extensions.data(),
       };
 
@@ -264,7 +264,7 @@ const uint32_t U32_MAX = 0xffffffff;
 	
 	if( gen_src ) {
 	  ensure_is_dir( gen_src_output_dir.exp, 1 );
-	  p_ostream out = ofs_open( strprintf( "%s/%s_%d.glsl", gen_src_output_dir.exp.c_str(), i->func_name.c_str(), i - func_infos.begin() ));
+	  p_ostream out = ofs_open( strprintf( "%s/%s_%d.glsl", gen_src_output_dir.exp.c_str(), i->func_name.c_str(), (int) (i - func_infos.begin())));
 	  (*out) << src << std::flush;
 	}
 	shaderc::Compiler compiler;
@@ -531,7 +531,7 @@ const uint32_t U32_MAX = 0xffffffff;
       // XXX remove debug timers
       timer_t t1("vk run");
       vk_func_info_t const & vfi = must_find(*kerns, rfc.rtc_func_name.c_str());
-      int var_ix = 0;
+      uint32_t var_ix = 0;
 
       VkDescriptorSetLayoutBinding UBO_binding = {
 	0,
