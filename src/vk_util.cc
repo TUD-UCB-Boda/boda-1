@@ -66,15 +66,15 @@ const uint32_t U32_MAX = 0xffffffff;
   typedef shared_ptr< map_str_vk_func_info_t > p_map_str_vk_func_info_t;
 
   // XXX find better name
-  struct vk_buffer_object_t {
+  struct vk_buffer_info_t {
     VkBuffer buf;
     VkDeviceMemory mem;
   };
 
-  typedef vector<vk_buffer_object_t> vect_vk_buffer_object_t;
+  typedef vector<vk_buffer_info_t> vect_vk_buffer_info_t;
 
   struct vk_var_info_t {
-    vk_buffer_object_t bo;
+    vk_buffer_info_t bo;
     dims_t dims;
   };
 
@@ -89,17 +89,17 @@ const uint32_t U32_MAX = 0xffffffff;
   
     VkInstance instance;
     
-    VkDebugReportCallbackEXT debugReportCallback;
+    VkDebugReportCallbackEXT debug_report_callback;
     
     VkDevice device;
 
-    VkPhysicalDeviceMemoryProperties memProperties;
+    VkPhysicalDeviceMemoryProperties mem_properties;
 
     VkQueue queue;
 
-    uint32_t queueFamilyIndex;
+    uint32_t queue_family_index;
 
-    VkCommandPool commandPool;
+    VkCommandPool command_pool;
     zi_bool init_done;
 
     p_map_str_vk_var_info_t vis;
@@ -108,15 +108,15 @@ const uint32_t U32_MAX = 0xffffffff;
     virtual cinfo_t const * get_cinfo( void ) const; // required declaration for NESI support
 
   
-    static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+    static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
 							VkDebugReportFlagsEXT flags,
 							VkDebugReportObjectTypeEXT objType,
 							uint64_t obj,
 							size_t location,
 							int32_t code,
-							const char* layerPrefix,
+							const char* layer_prefix,
 							const char* msg,
-							void* userData) {
+							void* user_data) {
 
       std::cerr << "validation layer: " << msg << std::endl;
 
@@ -125,7 +125,7 @@ const uint32_t U32_MAX = 0xffffffff;
     
     void init( void ) {
     
-      const VkApplicationInfo applicationInfo = {
+      const VkApplicationInfo application_info = {
 	VK_STRUCTURE_TYPE_APPLICATION_INFO,
 	0,
 	"boda",
@@ -143,81 +143,80 @@ const uint32_t U32_MAX = 0xffffffff;
       extensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
 #endif
       // XXX maybe use device extensions and layers
-      const VkInstanceCreateInfo instanceCreateInfo = {
+      const VkInstanceCreateInfo instance_create_info = {
 	VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
 	0,
 	0,
-	&applicationInfo,
+	&application_info,
 	layers.size(),
 	layers.data(),
 	extensions.size(),
 	extensions.data(),
       };
 
-      BAIL_ON_BAD_RESULT(vkCreateInstance(&instanceCreateInfo, 0, &instance));
+      BAIL_ON_BAD_RESULT(vkCreateInstance(&instance_create_info, 0, &instance));
 
 #ifdef DEBUG
-      const VkDebugReportCallbackCreateInfoEXT debugCallbackCreateInfo = {
+      const VkDebugReportCallbackCreateInfoEXT debug_callback_create_info = {
 	VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT,
 	0,
 	VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT | VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT,
-	debugCallback,
+	debug_callback,
 	0};
 
       // We have to explicitly load this function.
-      auto vkCreateDebugReportCallbackEXT = (PFN_vkCreateDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugReportCallbackEXT");
-      BAIL_ON_BAD_RESULT(vkCreateDebugReportCallbackEXT == nullptr ? VK_ERROR_INITIALIZATION_FAILED : VK_SUCCESS);
+      auto vk_create_debug_report_callback_EXT = (PFN_vkCreateDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugReportCallbackEXT");
+      BAIL_ON_BAD_RESULT(vk_create_debug_report_callback_EXT == nullptr ? VK_ERROR_INITIALIZATION_FAILED : VK_SUCCESS);
 
       // Create and register callback.
-      BAIL_ON_BAD_RESULT(vkCreateDebugReportCallbackEXT(instance, &debugCallbackCreateInfo, NULL, &debugReportCallback));
+      BAIL_ON_BAD_RESULT(vk_create_debug_report_callback_EXT(instance, &debug_callback_create_info, NULL, &debug_report_callback));
 #endif
     
-      uint32_t physicalDeviceCount = 0;
-      BAIL_ON_BAD_RESULT(vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, 0));
+      uint32_t physical_device_count = 0;
+      BAIL_ON_BAD_RESULT(vkEnumeratePhysicalDevices(instance, &physical_device_count, 0));
 
-      VkPhysicalDevice* const physicalDevices = (VkPhysicalDevice*)malloc(
-									  sizeof(VkPhysicalDevice) * physicalDeviceCount);
+      VkPhysicalDevice* const physical_devices = (VkPhysicalDevice*)malloc(sizeof(VkPhysicalDevice) * physical_device_count);
 
-      BAIL_ON_BAD_RESULT(vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, physicalDevices));
+      BAIL_ON_BAD_RESULT(vkEnumeratePhysicalDevices(instance, &physical_device_count, physical_devices));
 
-      BAIL_ON_BAD_RESULT(physicalDeviceCount ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED);
+      BAIL_ON_BAD_RESULT(physical_device_count ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED);
 
-      uint32_t queueFamilyCount;
+      uint32_t queue_family_count;
 
       // XXX just use device 0 for now
 
-      vkGetPhysicalDeviceQueueFamilyProperties(physicalDevices[0], &queueFamilyCount, 0);
-      std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+      vkGetPhysicalDeviceQueueFamilyProperties(physical_devices[0], &queue_family_count, 0);
+      std::vector<VkQueueFamilyProperties> queue_families(queue_family_count);
 
-      vkGetPhysicalDeviceQueueFamilyProperties(physicalDevices[0], &queueFamilyCount, queueFamilies.data());
-      queueFamilyIndex = 0;
-      bool foundQueueFamily = false;
-      for (; queueFamilyIndex < queueFamilyCount; queueFamilyIndex++) {
-	VkQueueFamilyProperties props = queueFamilies[queueFamilyIndex];
+      vkGetPhysicalDeviceQueueFamilyProperties(physical_devices[0], &queue_family_count, queue_families.data());
+      queue_family_index = 0;
+      bool found_queue_family = false;
+      for (; queue_family_index < queue_family_count; queue_family_index++) {
+	VkQueueFamilyProperties props = queue_families[queue_family_index];
       
 	if (props.queueCount > 0 && (props.queueFlags & VK_QUEUE_COMPUTE_BIT)) {
-	  foundQueueFamily = true;
+	  found_queue_family = true;
 	  break;
 	}
       }
 
-      BAIL_ON_BAD_RESULT(foundQueueFamily ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED);
+      BAIL_ON_BAD_RESULT(found_queue_family ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED);
 
       // XXX investigate
-      const float queuePriority = 1.0f;
+      const float queue_priority = 1.0f;
 
     
       const VkDeviceQueueCreateInfo deviceQueueCreateInfo = {
 	VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
 	0,
 	0,
-	queueFamilyIndex,
+	queue_family_index,
 	1,
-	&queuePriority
+	&queue_priority
       };
 
       // XXX device extensions and layers
-      const VkDeviceCreateInfo deviceCreateInfo = {
+      const VkDeviceCreateInfo device_create_info = {
 	VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 	0,
 	0,
@@ -230,21 +229,21 @@ const uint32_t U32_MAX = 0xffffffff;
 	0
       };
 
-      BAIL_ON_BAD_RESULT(vkCreateDevice(physicalDevices[0], &deviceCreateInfo, 0, &device));
+      BAIL_ON_BAD_RESULT(vkCreateDevice(physical_devices[0], &device_create_info, 0, &device));
 
-      vkGetPhysicalDeviceMemoryProperties(physicalDevices[0], &memProperties);
+      vkGetPhysicalDeviceMemoryProperties(physical_devices[0], &mem_properties);
   
-      vkGetDeviceQueue(device, queueFamilyIndex, 0, &queue);
+      vkGetDeviceQueue(device, queue_family_index, 0, &queue);
     
 
-      VkCommandPoolCreateInfo commandPoolCreateInfo = {
+      VkCommandPoolCreateInfo command_pool_create_info = {
 	VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
 	0,
 	0,
-	queueFamilyIndex
+	queue_family_index
       };
 
-      BAIL_ON_BAD_RESULT(vkCreateCommandPool(device, &commandPoolCreateInfo, 0, &commandPool));
+      BAIL_ON_BAD_RESULT(vkCreateCommandPool(device, &command_pool_create_info, 0, &command_pool));
 
       init_done.v = true;
     }
@@ -281,7 +280,7 @@ const uint32_t U32_MAX = 0xffffffff;
 	if (buffer.size() == 0)
 	  BAIL_ON_BAD_RESULT(VK_INCOMPLETE);
     
-	VkShaderModuleCreateInfo shaderModuleCreateInfo = {
+	VkShaderModuleCreateInfo shader_module_create_info = {
 	  VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
 	  0,
 	  0,
@@ -289,105 +288,105 @@ const uint32_t U32_MAX = 0xffffffff;
 	  buffer.data()
 	};
 
-	VkShaderModule shaderModule;
-	BAIL_ON_BAD_RESULT(vkCreateShaderModule(device, &shaderModuleCreateInfo, 0, &shaderModule));
+	VkShaderModule shader_module;
+	BAIL_ON_BAD_RESULT(vkCreateShaderModule(device, &shader_module_create_info, 0, &shader_module));
 
-	must_insert(*kerns, i->func_name, vk_func_info_t{*i, shaderModule});
+	must_insert(*kerns, i->func_name, vk_func_info_t{*i, shader_module});
       }      
 
     
     }
     
     // buf and mem of return value must be destroyed/freed
-    vk_buffer_object_t createBufferObject(VkDeviceSize size, VkBufferUsageFlags bufferFlags, VkMemoryPropertyFlags memoryFlags) {
+    vk_buffer_info_t create_buffer_info(VkDeviceSize size, VkBufferUsageFlags buffer_flags, VkMemoryPropertyFlags memory_flags) {
 
-      const VkBufferCreateInfo bufferCreateInfo = {
+      const VkBufferCreateInfo buffer_create_info = {
 	VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 	0,
 	0,
 	size,
-	bufferFlags,
+	buffer_flags,
 	VK_SHARING_MODE_EXCLUSIVE,
 	1,
-	&queueFamilyIndex
+	&queue_family_index
       };
 
     
       VkBuffer buf;
-      BAIL_ON_BAD_RESULT(vkCreateBuffer(device, &bufferCreateInfo, 0, &buf));
+      BAIL_ON_BAD_RESULT(vkCreateBuffer(device, &buffer_create_info, 0, &buf));
 
       
-      // set memoryTypeIndex to an invalid entry in the properties.memoryTypes array
-      uint32_t memoryTypeIndex = VK_MAX_MEMORY_TYPES;
+      // set memory_type_index to an invalid entry in the properties.memoryTypes array
+      uint32_t memory_type_index = VK_MAX_MEMORY_TYPES;
 
-      VkMemoryRequirements memReqs;
-      vkGetBufferMemoryRequirements(device, buf, &memReqs);
+      VkMemoryRequirements mem_reqs;
+      vkGetBufferMemoryRequirements(device, buf, &mem_reqs);
 
-      for (uint32_t k = 0; k < memProperties.memoryTypeCount; k++) {
-	if ((memoryFlags & memProperties.memoryTypes[k].propertyFlags) == memoryFlags &&
-	    (memReqs.memoryTypeBits & (1 << k))) {
-	  memoryTypeIndex = k;
+      for (uint32_t k = 0; k < mem_properties.memoryTypeCount; k++) {
+	if ((memory_flags & mem_properties.memoryTypes[k].propertyFlags) == memory_flags &&
+	    (mem_reqs.memoryTypeBits & (1 << k))) {
+	  memory_type_index = k;
 	  break;
 	}
       }
 
-      BAIL_ON_BAD_RESULT(memoryTypeIndex == VK_MAX_MEMORY_TYPES ? VK_ERROR_OUT_OF_HOST_MEMORY : VK_SUCCESS);
+      BAIL_ON_BAD_RESULT(memory_type_index == VK_MAX_MEMORY_TYPES ? VK_ERROR_OUT_OF_HOST_MEMORY : VK_SUCCESS);
 
-      const VkMemoryAllocateInfo memoryAllocateInfo = {
+      const VkMemoryAllocateInfo memory_allocate_info = {
 	VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
 	0,
-	memReqs.size,
-	memoryTypeIndex
+	mem_reqs.size,
+	memory_type_index
       };
-      VkDeviceMemory devMem;
-      BAIL_ON_BAD_RESULT(vkAllocateMemory(device, &memoryAllocateInfo, 0, &devMem));
+      VkDeviceMemory dev_mem;
+      BAIL_ON_BAD_RESULT(vkAllocateMemory(device, &memory_allocate_info, 0, &dev_mem));
  
-      BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, buf, devMem, 0));
+      BAIL_ON_BAD_RESULT(vkBindBufferMemory(device, buf, dev_mem, 0));
      
-      return {buf, devMem};
+      return {buf, dev_mem};
     }
 
-    void bufferCopy(VkBuffer dst, VkBuffer src, VkDeviceSize size) {
+    void buffer_copy(VkBuffer dst, VkBuffer src, VkDeviceSize size) {
 
-      VkCommandBufferAllocateInfo commandBufferAllocateInfo = {
+      VkCommandBufferAllocateInfo command_buffer_allocate_info = {
 	VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
 	0,
-	commandPool,
+	command_pool,
 	VK_COMMAND_BUFFER_LEVEL_PRIMARY,
 	1
       };
 
-      VkCommandBuffer commandBuffer;
-      BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, &commandBuffer));
+      VkCommandBuffer command_buffer;
+      BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(device, &command_buffer_allocate_info, &command_buffer));
 
-      VkCommandBufferBeginInfo commandBufferBeginInfo = {
+      VkCommandBufferBeginInfo command_buffer_begin_info = {
 	VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 	0,
 	VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
 	0
       };
 
-      BAIL_ON_BAD_RESULT(vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo));
+      BAIL_ON_BAD_RESULT(vkBeginCommandBuffer(command_buffer, &command_buffer_begin_info));
 
-      VkBufferCopy bufferCopy = {0, 0, size};
-      vkCmdCopyBuffer(commandBuffer, src, dst, 1, &bufferCopy);
-
-
-      BAIL_ON_BAD_RESULT(vkEndCommandBuffer(commandBuffer));
+      VkBufferCopy copy = {0, 0, size};
+      vkCmdCopyBuffer(command_buffer, src, dst, 1, &copy);
 
 
-      VkSubmitInfo submitInfo = {
+      BAIL_ON_BAD_RESULT(vkEndCommandBuffer(command_buffer));
+
+
+      VkSubmitInfo submit_info = {
 	VK_STRUCTURE_TYPE_SUBMIT_INFO,
 	0,
 	0,
 	0,
 	0,
 	1,
-	&commandBuffer,
+	&command_buffer,
 	0,
 	0
       };
-      BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submitInfo, 0));
+      BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submit_info, 0));
       BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
     }
 
@@ -398,16 +397,16 @@ const uint32_t U32_MAX = 0xffffffff;
       // a new staging buffer everytime - var_to_nda as well
       vk_var_info_t const & vi = must_find( *vis, vn );
       assert( nda->dims == vi.dims);
-      vk_buffer_object_t staging = createBufferObject(nda->dims.bytes_sz(),
+      vk_buffer_info_t staging = create_buffer_info(nda->dims.bytes_sz(),
 						    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 						    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
       
-      void *devPtr;
-      BAIL_ON_BAD_RESULT(vkMapMemory(device, staging.mem, 0, nda->dims.bytes_sz(), 0, (void **)&devPtr));
-      memcpy(devPtr, nda->rp_elems(), nda->dims.bytes_sz());
+      void *dev_ptr;
+      BAIL_ON_BAD_RESULT(vkMapMemory(device, staging.mem, 0, nda->dims.bytes_sz(), 0, (void **)&dev_ptr));
+      memcpy(dev_ptr, nda->rp_elems(), nda->dims.bytes_sz());
       vkUnmapMemory(device, staging.mem);
 
-      bufferCopy(vi.bo.buf, staging.buf, nda->dims.bytes_sz());
+      buffer_copy(vi.bo.buf, staging.buf, nda->dims.bytes_sz());
       // XXX  wait for fence instead of idle -- var_to_nda as well
       vkFreeMemory(device, staging.mem, 0);
       vkDestroyBuffer(device, staging.buf, 0);
@@ -419,14 +418,14 @@ const uint32_t U32_MAX = 0xffffffff;
       vk_var_info_t const & vi = must_find( *vis, vn );
       assert( nda->dims == vi.dims);
 
-      vk_buffer_object_t staging = createBufferObject(nda->dims.bytes_sz(),
+      vk_buffer_info_t staging = create_buffer_info(nda->dims.bytes_sz(),
 						      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 						      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-      bufferCopy(staging.buf, vi.bo.buf, nda->dims.bytes_sz());
+      buffer_copy(staging.buf, vi.bo.buf, nda->dims.bytes_sz());
     
-      void *devPtr;
-      BAIL_ON_BAD_RESULT(vkMapMemory(device, staging.mem, 0, nda->dims.bytes_sz(), 0, (void **)&devPtr));
-      memcpy( nda->rp_elems(), devPtr, nda->dims.bytes_sz());
+      void *dev_ptr;
+      BAIL_ON_BAD_RESULT(vkMapMemory(device, staging.mem, 0, nda->dims.bytes_sz(), 0, (void **)&dev_ptr));
+      memcpy( nda->rp_elems(), dev_ptr, nda->dims.bytes_sz());
       vkUnmapMemory(device, staging.mem);
 
       vkFreeMemory(device, staging.mem, 0);
@@ -441,7 +440,7 @@ const uint32_t U32_MAX = 0xffffffff;
 
     void create_var_with_dims( string const & vn, dims_t const & dims ) {
       vk_var_info_t var;
-      vk_buffer_object_t bo = createBufferObject(dims.bytes_sz(),
+      vk_buffer_info_t bo = create_buffer_info(dims.bytes_sz(),
 						 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 						 VK_BUFFER_USAGE_TRANSFER_DST_BIT |
 						 VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -491,7 +490,7 @@ const uint32_t U32_MAX = 0xffffffff;
     vect_vk_query_pool_t call_evs;
     uint32_t alloc_call_id( void ) {
       // XXX actually use this, when running kernels
-      VkQueryPoolCreateInfo queryInfo = {
+      VkQueryPoolCreateInfo query_info = {
 	VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
 	0,
 	0,
@@ -499,10 +498,10 @@ const uint32_t U32_MAX = 0xffffffff;
 	2,
 	0
       };
-      VkQueryPool queryPool;
-      call_evs.push_back(queryPool);
+      VkQueryPool query_pool;
+      call_evs.push_back(query_pool);
     
-      vkCreateQueryPool(device, &queryInfo, 0, &call_evs[call_evs.size()-1]);
+      vkCreateQueryPool(device, &query_info, 0, &call_evs[call_evs.size()-1]);
 
       return call_evs.size() -1;
     }
@@ -532,18 +531,18 @@ const uint32_t U32_MAX = 0xffffffff;
       // XXX remove debug timers
       timer_t t1("vk run");
       vk_func_info_t const & vfi = must_find(*kerns, rfc.rtc_func_name.c_str());
-      int varIx = 0;
+      int var_ix = 0;
 
-      VkDescriptorSetLayoutBinding UBOBinding = {
+      VkDescriptorSetLayoutBinding UBO_binding = {
 	0,
 	VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 	1,
 	VK_SHADER_STAGE_COMPUTE_BIT,
 	0
       }; 
-      vector<VkDescriptorSetLayoutBinding> varBindings;
-      vector<rtc_arg_t> UBOArgs;
-      vector<rtc_arg_t> varArgs;
+      vector<VkDescriptorSetLayoutBinding> var_bindings;
+      vector<rtc_arg_t> UBO_args;
+      vector<rtc_arg_t> var_args;
       size_t UBO_sz = 0;
 
     
@@ -555,48 +554,48 @@ const uint32_t U32_MAX = 0xffffffff;
 
 	rtc_arg_t arg = ai->second;
 	if (arg.is_var()) {
-	  varBindings.push_back({varIx,
+	  var_bindings.push_back({var_ix,
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 		1,
 		VK_SHADER_STAGE_COMPUTE_BIT,
 		0});
-	  varArgs.push_back(arg);
-	  varIx++;
+	  var_args.push_back(arg);
+	  var_ix++;
 	  
 	} else if (arg.is_nda()) {
-	  UBOArgs.push_back(arg);
+	  UBO_args.push_back(arg);
 	  // GLSL has no datatypes smaller than 4 bytes
 	  UBO_sz += (arg.v->rp_elems() ? arg.v->dims.bytes_sz() : 4);
 	}
       }
 
-      VkDescriptorSetLayoutCreateInfo varLayoutCreateInfo = {
+      VkDescriptorSetLayoutCreateInfo var_layout_create_info = {
 	VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 	0,
 	0,
-	varIx,
-	&varBindings[0]
+	var_ix,
+	&var_bindings[0]
       };
 
-      VkDescriptorSetLayout varLayout;
-      BAIL_ON_BAD_RESULT(vkCreateDescriptorSetLayout(device, &varLayoutCreateInfo, 0, &varLayout));
+      VkDescriptorSetLayout var_layout;
+      BAIL_ON_BAD_RESULT(vkCreateDescriptorSetLayout(device, &var_layout_create_info, 0, &var_layout));
 
-      VkDescriptorSetLayoutCreateInfo UBOLayoutCreateInfo = {
+      VkDescriptorSetLayoutCreateInfo UBO_layout_create_info = {
 	VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 	0,
 	0,
 	1,
-	&UBOBinding
+	&UBO_binding
       };
 
-      VkDescriptorSetLayout UBOLayout;
-      BAIL_ON_BAD_RESULT(vkCreateDescriptorSetLayout(device, &UBOLayoutCreateInfo, 0, &UBOLayout));
+      VkDescriptorSetLayout UBO_layout;
+      BAIL_ON_BAD_RESULT(vkCreateDescriptorSetLayout(device, &UBO_layout_create_info, 0, &UBO_layout));
 
       std::vector<VkDescriptorSetLayout> layouts;
-      layouts.push_back(varLayout);
-      layouts.push_back(UBOLayout);
+      layouts.push_back(var_layout);
+      layouts.push_back(UBO_layout);
     
-      VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = {
+      VkPipelineLayoutCreateInfo pipeline_layout_create_info = {
 	VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 	0,
 	0,
@@ -606,8 +605,8 @@ const uint32_t U32_MAX = 0xffffffff;
 	0
       };
 
-      VkPipelineLayout pipelineLayout;
-      BAIL_ON_BAD_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, 0, &pipelineLayout));
+      VkPipelineLayout pipeline_layout;
+      BAIL_ON_BAD_RESULT(vkCreatePipelineLayout(device, &pipeline_layout_create_info, 0, &pipeline_layout));
 
       
       size_t const glob_work_sz = rfc.tpb.v*rfc.blks.v;
@@ -621,7 +620,7 @@ const uint32_t U32_MAX = 0xffffffff;
 
 
   
-      const VkSpecializationInfo specInfo = {
+      const VkSpecializationInfo spec_info = {
         1,                  // mapEntryCount
         entries,            // pMapEntries
         1 * sizeof(size_t),  // dataSize
@@ -630,7 +629,7 @@ const uint32_t U32_MAX = 0xffffffff;
 
     
     
-      VkComputePipelineCreateInfo computePipelineCreateInfo = {
+      VkComputePipelineCreateInfo compute_pipeline_create_info = {
 	VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
 	0,
 	0,
@@ -641,113 +640,113 @@ const uint32_t U32_MAX = 0xffffffff;
 	  VK_SHADER_STAGE_COMPUTE_BIT,
 	  vfi.kern,
 	  "main",
-	  &specInfo
+	  &spec_info
 	},
-	pipelineLayout,
+	pipeline_layout,
 	0,
 	0
       };
 
       VkPipeline pipeline;
-      BAIL_ON_BAD_RESULT(vkCreateComputePipelines(device, 0, 1, &computePipelineCreateInfo, 0, &pipeline));
+      BAIL_ON_BAD_RESULT(vkCreateComputePipelines(device, 0, 1, &compute_pipeline_create_info, 0, &pipeline));
 
   
-      VkDescriptorPoolSize varDescriptorPoolSize = {
+      VkDescriptorPoolSize var_descriptor_pool_size = {
 	VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-	varIx
+	var_ix
       };
 
 
-      VkDescriptorPoolCreateInfo varDescriptorPoolCreateInfo = {
+      VkDescriptorPoolCreateInfo var_descriptor_pool_create_info = {
 	VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 	0,
 	0,
 	1,
 	1,
-	&varDescriptorPoolSize
+	&var_descriptor_pool_size
       };
 
-      VkDescriptorPool varDescriptorPool;
-      BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &varDescriptorPoolCreateInfo, 0, &varDescriptorPool));
+      VkDescriptorPool var_descriptor_pool;
+      BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &var_descriptor_pool_create_info, 0, &var_descriptor_pool));
 
     
-      VkDescriptorSetAllocateInfo varDescriptorSetAllocateInfo = {
+      VkDescriptorSetAllocateInfo var_descriptor_set_allocate_info = {
 	VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 	0,
-	varDescriptorPool,
+	var_descriptor_pool,
 	1,
-	&varLayout
+	&var_layout
       };
 
-      VkDescriptorSet varDescriptorSet;
-      BAIL_ON_BAD_RESULT(vkAllocateDescriptorSets(device, &varDescriptorSetAllocateInfo, &varDescriptorSet));
+      VkDescriptorSet var_descriptor_set;
+      BAIL_ON_BAD_RESULT(vkAllocateDescriptorSets(device, &var_descriptor_set_allocate_info, &var_descriptor_set));
 
-      VkDescriptorPoolSize UBODescriptorPoolSize = {
+      VkDescriptorPoolSize UBO_descriptor_pool_size = {
 	VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 	1
       };
 
 
-      VkDescriptorPoolCreateInfo UBODescriptorPoolCreateInfo = {
+      VkDescriptorPoolCreateInfo UBO_descriptor_pool_create_info = {
 	VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 	0,
 	0,
 	1,
 	1,
-	&UBODescriptorPoolSize
+	&UBO_descriptor_pool_size
       };
 
-      VkDescriptorPool UBODescriptorPool;
-      BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &UBODescriptorPoolCreateInfo, 0, &UBODescriptorPool));
+      VkDescriptorPool UBO_descriptor_pool;
+      BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &UBO_descriptor_pool_create_info, 0, &UBO_descriptor_pool));
 
 
-      VkDescriptorSetAllocateInfo UBODescriptorSetAllocateInfo = {
+      VkDescriptorSetAllocateInfo UBO_descriptor_set_allocate_info = {
 	VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 	0,
-	UBODescriptorPool,
+	UBO_descriptor_pool,
 	1,
-	&UBOLayout
+	&UBO_layout
       };
 
-      VkDescriptorSet UBODescriptorSet;
-      BAIL_ON_BAD_RESULT(vkAllocateDescriptorSets(device, &UBODescriptorSetAllocateInfo, &UBODescriptorSet));
+      VkDescriptorSet UBO_descriptor_set;
+      BAIL_ON_BAD_RESULT(vkAllocateDescriptorSets(device, &UBO_descriptor_set_allocate_info, &UBO_descriptor_set));
 
-      vector<VkWriteDescriptorSet> descriptorSets(varIx+1);
-      vector<VkDescriptorBufferInfo> bi(varIx+1);
-      varIx = 0;
+      vector<VkWriteDescriptorSet> descriptor_sets(var_ix+1);
+      vector<VkDescriptorBufferInfo> bi(var_ix+1);
+      var_ix = 0;
 
-      for (rtc_arg_t arg : varArgs) {
+      for (rtc_arg_t arg : var_args) {
 	VkBuffer buf = must_find(*vis, arg.n).bo.buf;
-	bi[varIx] = {
+	bi[var_ix] = {
 	  buf,
 	  0,
 	  VK_WHOLE_SIZE};
 
-	descriptorSets[varIx] = {
+	descriptor_sets[var_ix] = {
 	  VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 	  0,
-	  varDescriptorSet,
-	  varIx,
+	  var_descriptor_set,
+	  var_ix,
 	  0,
 	  1,
 	  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 	  0,
-	  &bi[varIx],
+	  &bi[var_ix],
 	  0};
-	varIx++;
+	var_ix++;
       }
-      assert(varIx == bi.size() -1);
+      assert(var_ix == bi.size() -1);
 
       // XXX handle UBO_sz == 0
-      vk_buffer_object_t ubo = createBufferObject(UBO_sz, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+      vk_buffer_info_t ubo = create_buffer_info(UBO_sz, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
 						  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-      char* devPtr;
-      BAIL_ON_BAD_RESULT(vkMapMemory(device, ubo.mem, 0, UBO_sz, 0, (void **) &devPtr));
+      char* dev_ptr;
+      BAIL_ON_BAD_RESULT(vkMapMemory(device, ubo.mem, 0, UBO_sz, 0, (void **) &dev_ptr));
       size_t offset = 0;
-      for (rtc_arg_t arg : UBOArgs) {
+      for (rtc_arg_t arg : UBO_args) {
 	if (arg.v->rp_elems()) {
-	  memcpy(devPtr+offset, arg.v->rp_elems(), arg.v->dims.bytes_sz());
+	  memcpy(dev_ptr+offset, arg.v->rp_elems(), arg.v->dims.bytes_sz());
 	  offset += arg.v->dims.bytes_sz();
 	} else {
 	  offset += 4;
@@ -757,93 +756,93 @@ const uint32_t U32_MAX = 0xffffffff;
       
       vkUnmapMemory(device, ubo.mem);
       
-      bi[varIx] = {
+      bi[var_ix] = {
 	ubo.buf,
 	0,
 	VK_WHOLE_SIZE
       };
 
-      descriptorSets[varIx] = {
+      descriptor_sets[var_ix] = {
 	VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 	0,
-	UBODescriptorSet,
+	UBO_descriptor_set,
 	0,
 	0,
 	1,
 	VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 	0,
-	&bi[varIx],
+	&bi[var_ix],
 	0};
     
-      vkUpdateDescriptorSets(device, varIx+1, descriptorSets.data(), 0, 0);
+      vkUpdateDescriptorSets(device, var_ix+1, descriptor_sets.data(), 0, 0);
 
       uint32_t const call_id = alloc_call_id();
 
     
-      VkCommandBufferAllocateInfo commandBufferAllocateInfo = {
+      VkCommandBufferAllocateInfo command_buffer_allocate_info = {
 	VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
 	0,
-	commandPool,
+	command_pool,
 	VK_COMMAND_BUFFER_LEVEL_PRIMARY,
 	1
       };
-      // move commandBuffer to the class to avoid allocating a new CommandVuffer for every run
-      VkCommandBuffer commandBuffer;
-      BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, &commandBuffer));
+      // move command_buffer to the class to avoid allocating a new CommandVuffer for every run
+      VkCommandBuffer command_buffer;
+      BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(device, &command_buffer_allocate_info, &command_buffer));
 
     
-      VkCommandBufferBeginInfo commandBufferBeginInfo = {
+      VkCommandBufferBeginInfo command_buffer_begin_info = {
 	VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 	0,
 	VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
 	0
       };
 
-      BAIL_ON_BAD_RESULT(vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo));
+      BAIL_ON_BAD_RESULT(vkBeginCommandBuffer(command_buffer, &command_buffer_begin_info));
 
       // XXX use timestamps with queryPool from call_evs here to measure execution time
 
-      vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+      vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
     
       std::vector<VkDescriptorSet> ds;
-      ds.push_back(varDescriptorSet);
-      ds.push_back(UBODescriptorSet);
+      ds.push_back(var_descriptor_set);
+      ds.push_back(UBO_descriptor_set);
 
-      vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
-			      pipelineLayout, 0, 2, &ds[0], 0, 0);
-      vkCmdDispatch(commandBuffer, glob_work_sz/loc_work_sz, 1, 1);
+      vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+			      pipeline_layout, 0, 2, &ds[0], 0, 0);
+      vkCmdDispatch(command_buffer, glob_work_sz/loc_work_sz, 1, 1);
 
     
-      BAIL_ON_BAD_RESULT(vkEndCommandBuffer(commandBuffer));
+      BAIL_ON_BAD_RESULT(vkEndCommandBuffer(command_buffer));
 
     
       VkQueue queue;
-      vkGetDeviceQueue(device, queueFamilyIndex, 0, &queue);
+      vkGetDeviceQueue(device, queue_family_index, 0, &queue);
 
-      VkSubmitInfo submitInfo = {
+      VkSubmitInfo submit_info = {
 	VK_STRUCTURE_TYPE_SUBMIT_INFO,
 	0,
 	0,
 	0,
 	0,
 	1,
-	&commandBuffer,
+	&command_buffer,
 	0,
 	0
       };
 
       timer_t t("vk kernel");
-      BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submitInfo, 0));
+      BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submit_info, 0));
       BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
       t.stop();
       
       vkFreeMemory(device, ubo.mem, 0);
       vkDestroyBuffer(device, ubo.buf, 0);
-      vkDestroyDescriptorPool(device, varDescriptorPool, 0);
-      vkDestroyDescriptorPool(device, UBODescriptorPool, 0);
-      vkDestroyDescriptorSetLayout(device, varLayout, 0);
-      vkDestroyDescriptorSetLayout(device, UBOLayout, 0);
-      vkDestroyPipelineLayout(device, pipelineLayout, 0);
+      vkDestroyDescriptorPool(device, var_descriptor_pool, 0);
+      vkDestroyDescriptorPool(device, UBO_descriptor_pool, 0);
+      vkDestroyDescriptorSetLayout(device, var_layout, 0);
+      vkDestroyDescriptorSetLayout(device, UBO_layout, 0);
+      vkDestroyPipelineLayout(device, pipeline_layout, 0);
       vkDestroyPipeline(device, pipeline, 0);
 
       return call_id;
@@ -855,10 +854,10 @@ const uint32_t U32_MAX = 0xffffffff;
 #ifdef DEBUG
       auto func = (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT");
       BAIL_ON_BAD_RESULT(func == nullptr ? VK_ERROR_INITIALIZATION_FAILED : VK_SUCCESS);
-      func(instance, debugReportCallback, NULL);
+      func(instance, debug_report_callback, NULL);
 #endif
       release_all_funcs();
-      vkDestroyCommandPool(device, commandPool, 0);
+      vkDestroyCommandPool(device, command_pool, 0);
       vkDestroyDevice(device, 0);
       vkDestroyInstance(instance, 0);
     }
