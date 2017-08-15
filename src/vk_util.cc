@@ -776,9 +776,6 @@ const uint32_t U32_MAX = 0xffffffff;
 
       BAIL_ON_BAD_RESULT(vkEndCommandBuffer(command_buffer));
 
-      VkQueue queue;
-      vkGetDeviceQueue(device, queue_family_index, 0, &queue);
-
       VkSubmitInfo submit_info = {
 	VK_STRUCTURE_TYPE_SUBMIT_INFO,
 	0,
