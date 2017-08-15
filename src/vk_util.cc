@@ -97,6 +97,7 @@ const uint32_t U32_MAX = 0xffffffff;
     uint32_t queue_family_index;
 
     VkCommandPool command_pool;
+    VkCommandBuffer command_buffer;
     zi_bool init_done;
 
     p_map_str_vk_var_info_t vis;
@@ -234,11 +235,21 @@ const uint32_t U32_MAX = 0xffffffff;
       VkCommandPoolCreateInfo command_pool_create_info = {
 	VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
 	0,
-	0,
+	VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
 	queue_family_index
       };
 
       BAIL_ON_BAD_RESULT(vkCreateCommandPool(device, &command_pool_create_info, 0, &command_pool));
+
+      VkCommandBufferAllocateInfo command_buffer_allocate_info = {
+	VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+	0,
+	command_pool,
+	VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+	1
+      };
+
+      BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(device, &command_buffer_allocate_info, &command_buffer));
 
       init_done.v = true;
     }
@@ -339,17 +350,6 @@ const uint32_t U32_MAX = 0xffffffff;
     }
 
     void buffer_copy(VkBuffer dst, VkBuffer src, VkDeviceSize size) {
-
-      VkCommandBufferAllocateInfo command_buffer_allocate_info = {
-	VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-	0,
-	command_pool,
-	VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-	1
-      };
-
-      VkCommandBuffer command_buffer;
-      BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(device, &command_buffer_allocate_info, &command_buffer));
 
       VkCommandBufferBeginInfo command_buffer_begin_info = {
 	VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -752,18 +752,7 @@ const uint32_t U32_MAX = 0xffffffff;
       vkUpdateDescriptorSets(device, var_ix+1, descriptor_sets.data(), 0, 0);
 
       uint32_t const call_id = alloc_call_id();
-
-      VkCommandBufferAllocateInfo command_buffer_allocate_info = {
-	VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-	0,
-	command_pool,
-	VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-	1
-      };
-      // move command_buffer to the class to avoid allocating a new CommandVuffer for every run
-      VkCommandBuffer command_buffer;
-      BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(device, &command_buffer_allocate_info, &command_buffer));
-
+      
       VkCommandBufferBeginInfo command_buffer_begin_info = {
 	VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 	0,
