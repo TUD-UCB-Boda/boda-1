@@ -92,6 +92,9 @@ const uint32_t U32_MAX = 0xffffffff;
 
     VkPhysicalDeviceMemoryProperties mem_properties;
 
+    vk_buffer_info_t staging_buffer;
+    size_t staging_sz = 0;
+
     VkQueue queue;
 
     uint32_t queue_family_index;
@@ -349,6 +352,21 @@ const uint32_t U32_MAX = 0xffffffff;
       return {buf, dev_mem};
     }
 
+    void setup_staging_buffer(size_t size) {
+      if (size <= staging_sz)
+	return;
+      if (staging_sz != 0) {
+	vkFreeMemory(device, staging_buffer.mem, 0);
+	vkDestroyBuffer(device, staging_buffer.buf, 0);
+      }
+      staging_buffer = create_buffer_info(size,
+					  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+					  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+					  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+      staging_sz = size;
+    }
+
+
     void buffer_copy(VkBuffer dst, VkBuffer src, VkDeviceSize size) {
 
       VkCommandBufferBeginInfo command_buffer_begin_info = {
@@ -383,44 +401,29 @@ const uint32_t U32_MAX = 0xffffffff;
 
     void copy_nda_to_var (string const &vn, p_nda_t const & nda) {
 
-      // XXX maybe we should use some kind of heuristic to avoid allocating
-      // a new staging buffer everytime - var_to_nda as well
       vk_var_info_t const & vi = must_find( *vis, vn );
       assert( nda->dims == vi.dims);
-      vk_buffer_info_t staging = create_buffer_info(nda->dims.bytes_sz(),
-						    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-						    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
+      setup_staging_buffer(nda->dims.bytes_sz());
       void *dev_ptr;
-      BAIL_ON_BAD_RESULT(vkMapMemory(device, staging.mem, 0, nda->dims.bytes_sz(), 0, (void **)&dev_ptr));
+      BAIL_ON_BAD_RESULT(vkMapMemory(device, staging_buffer.mem, 0, nda->dims.bytes_sz(), 0, (void **)&dev_ptr));
       memcpy(dev_ptr, nda->rp_elems(), nda->dims.bytes_sz());
-      vkUnmapMemory(device, staging.mem);
+      vkUnmapMemory(device, staging_buffer.mem);
 
-      buffer_copy(vi.bo.buf, staging.buf, nda->dims.bytes_sz());
-      // XXX  wait for fence instead of idle -- var_to_nda as well
-      vkFreeMemory(device, staging.mem, 0);
-      vkDestroyBuffer(device, staging.buf, 0);
-
+      buffer_copy(vi.bo.buf, staging_buffer.buf, nda->dims.bytes_sz());
     }
 
     void copy_var_to_nda (p_nda_t const & nda, string const &vn) {
 
       vk_var_info_t const & vi = must_find( *vis, vn );
       assert( nda->dims == vi.dims);
-
-      vk_buffer_info_t staging = create_buffer_info(nda->dims.bytes_sz(),
-						      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-						      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-      buffer_copy(staging.buf, vi.bo.buf, nda->dims.bytes_sz());
+      setup_staging_buffer(nda->dims.bytes_sz());
+      buffer_copy(staging_buffer.buf, vi.bo.buf, nda->dims.bytes_sz());
 
       void *dev_ptr;
-      BAIL_ON_BAD_RESULT(vkMapMemory(device, staging.mem, 0, nda->dims.bytes_sz(), 0, (void **)&dev_ptr));
+      BAIL_ON_BAD_RESULT(vkMapMemory(device, staging_buffer.mem, 0, nda->dims.bytes_sz(), 0, (void **)&dev_ptr));
       memcpy( nda->rp_elems(), dev_ptr, nda->dims.bytes_sz());
-      vkUnmapMemory(device, staging.mem);
-
-      vkFreeMemory(device, staging.mem, 0);
-      vkDestroyBuffer(device, staging.buf, 0);
-
+      vkUnmapMemory(device, staging_buffer.mem);
     }
 
     p_nda_t get_var_raw_native_pointer( string const & vn ) {
@@ -808,6 +811,11 @@ const uint32_t U32_MAX = 0xffffffff;
     void finish_and_sync( void ) { BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue)); }
 
     ~vk_compute_t() {
+      if (staging_sz != 0) {
+	vkFreeMemory(device, staging_buffer.mem, 0);
+	vkDestroyBuffer(device, staging_buffer.buf, 0);
+      }
+      
 #ifdef DEBUG
       auto func = (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT");
       BAIL_ON_BAD_RESULT(func == nullptr ? VK_ERROR_INITIALIZATION_FAILED : VK_SUCCESS);
