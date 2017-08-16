@@ -54,9 +54,17 @@ const uint32_t U32_MAX = 0xffffffff;
 
 )rstr";
 
+  struct vk_descriptor_info_t {
+    VkDescriptorSetLayout layout;
+    VkDescriptorPool pool;
+    VkDescriptorSet set;
+  };
   struct vk_func_info_t {
     rtc_func_info_t info;
     VkShaderModule kern;
+    VkPipelineLayout pipeline_layout;
+    vk_descriptor_info_t var_info;
+    vk_descriptor_info_t UBO_info;
   };
 
   typedef map< string, vk_func_info_t > map_str_vk_func_info_t;
@@ -262,6 +270,50 @@ const uint32_t U32_MAX = 0xffffffff;
       return "vk";
     }
 
+    vk_descriptor_info_t create_descriptor(VkDescriptorSetLayoutBinding *bindings, size_t num_bindings, VkDescriptorType desc_type) {
+      VkDescriptorSetLayoutCreateInfo layout_create_info = {
+	VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+	0,
+	0,
+	(uint32_t)num_bindings,
+	bindings
+      };
+
+      VkDescriptorSetLayout layout;
+      BAIL_ON_BAD_RESULT(vkCreateDescriptorSetLayout(device, &layout_create_info, 0, &layout));
+
+
+      VkDescriptorPoolSize descriptor_pool_size = {
+	desc_type,
+	(uint32_t) num_bindings
+      };
+
+      VkDescriptorPoolCreateInfo descriptor_pool_create_info = {
+	VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+	0,
+	0,
+	1,
+	1,
+	&descriptor_pool_size
+      };
+
+      VkDescriptorPool descriptor_pool;
+      BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &descriptor_pool_create_info, 0, &descriptor_pool));
+
+
+      VkDescriptorSetAllocateInfo descriptor_set_allocate_info = {
+	VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+	0,
+	descriptor_pool,
+	1,
+	&layout
+      };
+
+      VkDescriptorSet descriptor_set;
+      BAIL_ON_BAD_RESULT(vkAllocateDescriptorSets(device, &descriptor_set_allocate_info, &descriptor_set));
+
+      return {layout, descriptor_pool, descriptor_set};
+    }
 
     void compile( vect_rtc_func_info_t const & func_infos, rtc_compile_opts_t const & opts) {
       assert (init_done.v);
@@ -300,7 +352,54 @@ const uint32_t U32_MAX = 0xffffffff;
 	VkShaderModule shader_module;
 	BAIL_ON_BAD_RESULT(vkCreateShaderModule(device, &shader_module_create_info, 0, &shader_module));
 
-	must_insert(*kerns, i->func_name, vk_func_info_t{*i, shader_module});
+	vector<VkDescriptorSetLayoutBinding> var_bindings;
+	size_t bind_ix = 0;
+
+	for (vect_arg_decl_t::const_iterator arg = i->arg_decls.begin(); arg != i->arg_decls.end(); ++arg ) {
+	  uint32_t const multi_sz = arg->get_multi_sz( i->op );
+	  for( uint32_t mix = 0; mix != multi_sz; ++mix ) {
+	    if (arg->loi.v == 0 || arg->io_type == "REF") // XXX handle DYN-REF
+	      break;
+
+	    // This argument will be passed via a storage buffer, so we setup its descriptor layout
+	    var_bindings.push_back({(uint32_t)bind_ix,
+		  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+		  1,
+		  VK_SHADER_STAGE_COMPUTE_BIT,
+		  0});
+	    bind_ix++;
+	  }
+	}
+
+	VkDescriptorSetLayoutBinding UBO_binding = {
+	  0,
+	  VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+	  1,
+	  VK_SHADER_STAGE_COMPUTE_BIT,
+	  0
+	};
+
+	vk_descriptor_info_t var_info = create_descriptor(&var_bindings[0], bind_ix, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	vk_descriptor_info_t UBO_info = create_descriptor(&UBO_binding, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+
+	std::vector<VkDescriptorSetLayout> layouts;
+	layouts.push_back(var_info.layout);
+	layouts.push_back(UBO_info.layout);
+
+	VkPipelineLayoutCreateInfo pipeline_layout_create_info = {
+	  VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+	  0,
+	  0,
+	  2,
+	  layouts.data(),
+	  0,
+	  0
+	};
+
+	VkPipelineLayout pipeline_layout;
+	BAIL_ON_BAD_RESULT(vkCreatePipelineLayout(device, &pipeline_layout_create_info, 0, &pipeline_layout));
+
+	must_insert(*kerns, i->func_name, vk_func_info_t{*i, shader_module, pipeline_layout, var_info, UBO_info});
       }
 
     }
@@ -459,7 +558,13 @@ const uint32_t U32_MAX = 0xffffffff;
     }
     virtual void release_all_funcs( void ) {
       for (auto& f : *kerns) {
-	vkDestroyShaderModule(device, f.second.kern, 0);
+	vk_func_info_t func = must_find( *kerns, f.first );
+	vkDestroyShaderModule(device, func.kern, 0);
+	vkDestroyDescriptorPool(device, func.var_info.pool, 0);
+	vkDestroyDescriptorPool(device, func.UBO_info.pool, 0);
+	vkDestroyDescriptorSetLayout(device, func.var_info.layout, 0);
+	vkDestroyDescriptorSetLayout(device, func.UBO_info.layout, 0);
+	vkDestroyPipelineLayout(device, func.pipeline_layout, 0);
       }
       kerns->clear();
     }
@@ -511,9 +616,14 @@ const uint32_t U32_MAX = 0xffffffff;
     virtual float get_var_ready_delta( string const & vn1, string const & vn2 ) { return 0; }
 
     void release_func( string const & func_name ) {
-
+      std::cout << "releasing: " << func_name << std::endl;
       vk_func_info_t func = must_find( *kerns, func_name );
       vkDestroyShaderModule(device, func.kern, 0);
+      vkDestroyDescriptorPool(device, func.var_info.pool, 0);
+      vkDestroyDescriptorPool(device, func.UBO_info.pool, 0);
+      vkDestroyDescriptorSetLayout(device, func.var_info.layout, 0);
+      vkDestroyDescriptorSetLayout(device, func.UBO_info.layout, 0);
+      vkDestroyPipelineLayout(device, func.pipeline_layout, 0);
       must_erase( *kerns, func_name );
     }
 
@@ -523,14 +633,6 @@ const uint32_t U32_MAX = 0xffffffff;
       vk_func_info_t const & vfi = must_find(*kerns, rfc.rtc_func_name.c_str());
       uint32_t var_ix = 0;
 
-      VkDescriptorSetLayoutBinding UBO_binding = {
-	0,
-	VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-	1,
-	VK_SHADER_STAGE_COMPUTE_BIT,
-	0
-      };
-      vector<VkDescriptorSetLayoutBinding> var_bindings;
       vector<rtc_arg_t> UBO_args;
       vector<rtc_arg_t> var_args;
       size_t UBO_sz = 0;
@@ -544,11 +646,6 @@ const uint32_t U32_MAX = 0xffffffff;
 
 	rtc_arg_t arg = ai->second;
 	if (arg.is_var()) {
-	  var_bindings.push_back({var_ix,
-		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-		1,
-		VK_SHADER_STAGE_COMPUTE_BIT,
-		0});
 	  var_args.push_back(arg);
 	  var_ix++;
 	} else if (arg.is_nda()) {
@@ -557,45 +654,6 @@ const uint32_t U32_MAX = 0xffffffff;
 	  UBO_sz += (arg.v->rp_elems() ? arg.v->dims.bytes_sz() : 4);
 	}
       }
-
-      VkDescriptorSetLayoutCreateInfo var_layout_create_info = {
-	VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-	0,
-	0,
-	var_ix,
-	&var_bindings[0]
-      };
-
-      VkDescriptorSetLayout var_layout;
-      BAIL_ON_BAD_RESULT(vkCreateDescriptorSetLayout(device, &var_layout_create_info, 0, &var_layout));
-
-      VkDescriptorSetLayoutCreateInfo UBO_layout_create_info = {
-	VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-	0,
-	0,
-	1,
-	&UBO_binding
-      };
-
-      VkDescriptorSetLayout UBO_layout;
-      BAIL_ON_BAD_RESULT(vkCreateDescriptorSetLayout(device, &UBO_layout_create_info, 0, &UBO_layout));
-
-      std::vector<VkDescriptorSetLayout> layouts;
-      layouts.push_back(var_layout);
-      layouts.push_back(UBO_layout);
-
-      VkPipelineLayoutCreateInfo pipeline_layout_create_info = {
-	VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-	0,
-	0,
-	2,
-	&(layouts[0]),
-	0,
-	0
-      };
-
-      VkPipelineLayout pipeline_layout;
-      BAIL_ON_BAD_RESULT(vkCreatePipelineLayout(device, &pipeline_layout_create_info, 0, &pipeline_layout));
 
       size_t const glob_work_sz = rfc.tpb.v*rfc.blks.v;
       size_t const loc_work_sz = rfc.tpb.v;
@@ -624,7 +682,7 @@ const uint32_t U32_MAX = 0xffffffff;
 	  "main",
 	  &spec_info
 	},
-	pipeline_layout,
+	vfi.pipeline_layout,
 	0,
 	0
       };
@@ -632,66 +690,8 @@ const uint32_t U32_MAX = 0xffffffff;
       VkPipeline pipeline;
       BAIL_ON_BAD_RESULT(vkCreateComputePipelines(device, 0, 1, &compute_pipeline_create_info, 0, &pipeline));
 
-      VkDescriptorPoolSize var_descriptor_pool_size = {
-	VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-	var_ix
-      };
-
-      VkDescriptorPoolCreateInfo var_descriptor_pool_create_info = {
-	VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-	0,
-	0,
-	1,
-	1,
-	&var_descriptor_pool_size
-      };
-
-      VkDescriptorPool var_descriptor_pool;
-      BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &var_descriptor_pool_create_info, 0, &var_descriptor_pool));
-
-      VkDescriptorSetAllocateInfo var_descriptor_set_allocate_info = {
-	VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-	0,
-	var_descriptor_pool,
-	1,
-	&var_layout
-      };
-
-      VkDescriptorSet var_descriptor_set;
-      BAIL_ON_BAD_RESULT(vkAllocateDescriptorSets(device, &var_descriptor_set_allocate_info, &var_descriptor_set));
-
-      VkDescriptorPoolSize UBO_descriptor_pool_size = {
-	VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-	1
-      };
-
-
-      VkDescriptorPoolCreateInfo UBO_descriptor_pool_create_info = {
-	VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-	0,
-	0,
-	1,
-	1,
-	&UBO_descriptor_pool_size
-      };
-
-      VkDescriptorPool UBO_descriptor_pool;
-      BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &UBO_descriptor_pool_create_info, 0, &UBO_descriptor_pool));
-
-
-      VkDescriptorSetAllocateInfo UBO_descriptor_set_allocate_info = {
-	VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-	0,
-	UBO_descriptor_pool,
-	1,
-	&UBO_layout
-      };
-
-      VkDescriptorSet UBO_descriptor_set;
-      BAIL_ON_BAD_RESULT(vkAllocateDescriptorSets(device, &UBO_descriptor_set_allocate_info, &UBO_descriptor_set));
-
       vector<VkWriteDescriptorSet> descriptor_sets(var_ix+1);
-      vector<VkDescriptorBufferInfo> bi(var_ix+1);
+      vector<VkDescriptorBufferInfo> bi(var_ix+1); // XXX no need for vector
       var_ix = 0;
 
       for (rtc_arg_t arg : var_args) {
@@ -704,7 +704,7 @@ const uint32_t U32_MAX = 0xffffffff;
 	descriptor_sets[var_ix] = {
 	  VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 	  0,
-	  var_descriptor_set,
+	  vfi.var_info.set,
 	  var_ix,
 	  0,
 	  1,
@@ -718,7 +718,7 @@ const uint32_t U32_MAX = 0xffffffff;
 
       // XXX handle UBO_sz == 0
       vk_buffer_info_t ubo = create_buffer_info(UBO_sz, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-						  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+						VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
       char* dev_ptr;
       BAIL_ON_BAD_RESULT(vkMapMemory(device, ubo.mem, 0, UBO_sz, 0, (void **) &dev_ptr));
@@ -743,7 +743,7 @@ const uint32_t U32_MAX = 0xffffffff;
       descriptor_sets[var_ix] = {
 	VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 	0,
-	UBO_descriptor_set,
+	vfi.UBO_info.set,
 	0,
 	0,
 	1,
@@ -770,11 +770,11 @@ const uint32_t U32_MAX = 0xffffffff;
       vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 
       std::vector<VkDescriptorSet> ds;
-      ds.push_back(var_descriptor_set);
-      ds.push_back(UBO_descriptor_set);
+      ds.push_back(vfi.var_info.set);
+      ds.push_back(vfi.UBO_info.set);
 
       vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
-			      pipeline_layout, 0, 2, &ds[0], 0, 0);
+			      vfi.pipeline_layout, 0, 2, ds.data(), 0, 0);
       vkCmdDispatch(command_buffer, glob_work_sz/loc_work_sz, 1, 1);
 
       BAIL_ON_BAD_RESULT(vkEndCommandBuffer(command_buffer));
@@ -798,11 +798,6 @@ const uint32_t U32_MAX = 0xffffffff;
 
       vkFreeMemory(device, ubo.mem, 0);
       vkDestroyBuffer(device, ubo.buf, 0);
-      vkDestroyDescriptorPool(device, var_descriptor_pool, 0);
-      vkDestroyDescriptorPool(device, UBO_descriptor_pool, 0);
-      vkDestroyDescriptorSetLayout(device, var_layout, 0);
-      vkDestroyDescriptorSetLayout(device, UBO_layout, 0);
-      vkDestroyPipelineLayout(device, pipeline_layout, 0);
       vkDestroyPipeline(device, pipeline, 0);
 
       return call_id;
