@@ -639,7 +639,9 @@ namespace boda
     if( compile_pend.empty() ) { return; } 
     vect_rtc_func_info_t rtc_prog_infos;
     for( vect_p_rtc_call_gen_t::const_iterator i = compile_pend.begin(); i != compile_pend.end(); ++i ) {
-      rtc_prog_infos.push_back( {(*i)->gen_fn,(*i)->rtc_prog_str,(*i)->arg_names,(*i)->op, (*i)->rtc_func_template->arg_decls} );
+      rtc_prog_infos.push_back( {(*i)->gen_fn,(*i)->rtc_prog_str,(*i)->arg_names,
+	    (*i)->op, (*i)->rtc_func_template->arg_decls,
+	    (*i)->rtc_call_geom.tpb ? (*i)->rtc_call_geom.tpb : (*i)->rtc_call_geom.get_default_tpb()});
       (*i)->is_compiled.v = 1; // well, or at least we're going to *try* to compile this func anyway ...
     }
     //printf( "rtc_prog_infos=%s\n", str(rtc_prog_infos).c_str() );

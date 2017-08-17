@@ -62,6 +62,7 @@ namespace boda
     vect_string arg_names;
     op_base_t op;
     vect_arg_decl_t arg_decls; // XXX: partially redundant with arg_names
+    uint32_t tpb;
   };
   typedef vector< rtc_func_info_t > vect_rtc_func_info_t; 
   std::ostream & operator << ( std::ostream & out, rtc_func_info_t const & o );

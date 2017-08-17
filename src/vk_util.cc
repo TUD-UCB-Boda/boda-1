@@ -63,8 +63,12 @@ const uint32_t U32_MAX = 0xffffffff;
     rtc_func_info_t info;
     VkShaderModule kern;
     VkPipelineLayout pipeline_layout;
+    VkPipeline pipeline;
     vk_descriptor_info_t var_info;
     vk_descriptor_info_t UBO_info;
+    #ifdef DEBUG
+    uint32_t tpb;
+    #endif
   };
 
   typedef map< string, vk_func_info_t > map_str_vk_func_info_t;
@@ -322,7 +326,6 @@ const uint32_t U32_MAX = 0xffffffff;
 
       for( vect_rtc_func_info_t::const_iterator i = func_infos.begin(); i != func_infos.end(); ++i ) {
 	string src = vk_base_decls + get_rtc_base_decls() + i->func_src;
-
 	if( gen_src ) {
 	  ensure_is_dir( gen_src_output_dir.exp, 1 );
 	  p_ostream out = ofs_open( strprintf( "%s/%s_%d.glsl", gen_src_output_dir.exp.c_str(), i->func_name.c_str(), (int) (i - func_infos.begin())));
@@ -399,7 +402,44 @@ const uint32_t U32_MAX = 0xffffffff;
 	VkPipelineLayout pipeline_layout;
 	BAIL_ON_BAD_RESULT(vkCreatePipelineLayout(device, &pipeline_layout_create_info, 0, &pipeline_layout));
 
-	must_insert(*kerns, i->func_name, vk_func_info_t{*i, shader_module, pipeline_layout, var_info, UBO_info});
+	size_t const loc_work_sz = i->tpb;
+	const VkSpecializationMapEntry entries[] =
+	// id,  offset,                size
+	  {{0, 0, sizeof(size_t)}};
+
+	const VkSpecializationInfo spec_info = {
+	  1,                  // mapEntryCount
+	  entries,            // pMapEntries
+	  1 * sizeof(size_t),  // dataSize
+	  &loc_work_sz               // pData
+	};
+
+	VkComputePipelineCreateInfo compute_pipeline_create_info = {
+	  VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+	  0,
+	  0,
+	  {
+	    VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+	    0,
+	    0,
+	    VK_SHADER_STAGE_COMPUTE_BIT,
+	    shader_module,
+	    "main",
+	    &spec_info
+	  },
+	  pipeline_layout,
+	  0,
+	  0
+	};
+
+	VkPipeline pipeline;
+	BAIL_ON_BAD_RESULT(vkCreateComputePipelines(device, 0, 1, &compute_pipeline_create_info, 0, &pipeline));
+
+	must_insert(*kerns, i->func_name, vk_func_info_t{*i, shader_module, pipeline_layout, pipeline, var_info, UBO_info
+	      #ifdef DEBUG
+	      , (uint32_t) loc_work_sz
+	      #endif
+	      });
       }
 
     }
@@ -564,6 +604,7 @@ const uint32_t U32_MAX = 0xffffffff;
 	vkDestroyDescriptorPool(device, func.UBO_info.pool, 0);
 	vkDestroyDescriptorSetLayout(device, func.var_info.layout, 0);
 	vkDestroyDescriptorSetLayout(device, func.UBO_info.layout, 0);
+	vkDestroyPipeline(device, func.pipeline, 0);
 	vkDestroyPipelineLayout(device, func.pipeline_layout, 0);
       }
       kerns->clear();
@@ -623,6 +664,7 @@ const uint32_t U32_MAX = 0xffffffff;
       vkDestroyDescriptorPool(device, func.UBO_info.pool, 0);
       vkDestroyDescriptorSetLayout(device, func.var_info.layout, 0);
       vkDestroyDescriptorSetLayout(device, func.UBO_info.layout, 0);
+      vkDestroyPipeline(device, func.pipeline, 0);
       vkDestroyPipelineLayout(device, func.pipeline_layout, 0);
       must_erase( *kerns, func_name );
     }
@@ -654,42 +696,7 @@ const uint32_t U32_MAX = 0xffffffff;
 	  UBO_sz += (arg.v->rp_elems() ? arg.v->dims.bytes_sz() : 4);
 	}
       }
-
-      size_t const glob_work_sz = rfc.tpb.v*rfc.blks.v;
-      size_t const loc_work_sz = rfc.tpb.v;
-
-      const VkSpecializationMapEntry entries[] =
-      // id,  offset,                size
-        {{0, 0, sizeof(size_t)}};
-
-      const VkSpecializationInfo spec_info = {
-        1,                  // mapEntryCount
-        entries,            // pMapEntries
-        1 * sizeof(size_t),  // dataSize
-        &loc_work_sz               // pData
-      };
-
-      VkComputePipelineCreateInfo compute_pipeline_create_info = {
-	VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-	0,
-	0,
-	{
-	  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-	  0,
-	  0,
-	  VK_SHADER_STAGE_COMPUTE_BIT,
-	  vfi.kern,
-	  "main",
-	  &spec_info
-	},
-	vfi.pipeline_layout,
-	0,
-	0
-      };
-
-      VkPipeline pipeline;
-      BAIL_ON_BAD_RESULT(vkCreateComputePipelines(device, 0, 1, &compute_pipeline_create_info, 0, &pipeline));
-
+      
       vector<VkWriteDescriptorSet> descriptor_sets(var_ix+1);
       vector<VkDescriptorBufferInfo> bi(var_ix+1); // XXX no need for vector
       var_ix = 0;
@@ -755,6 +762,12 @@ const uint32_t U32_MAX = 0xffffffff;
       vkUpdateDescriptorSets(device, var_ix+1, descriptor_sets.data(), 0, 0);
 
       uint32_t const call_id = alloc_call_id();
+
+      size_t const glob_work_sz = rfc.tpb.v*rfc.blks.v;
+      size_t const loc_work_sz = rfc.tpb.v;
+      #ifdef DEBUG
+      assert(loc_work_sz == vfi.tpb); // XXX: does this hold?
+      #endif
       
       VkCommandBufferBeginInfo command_buffer_begin_info = {
 	VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -767,7 +780,7 @@ const uint32_t U32_MAX = 0xffffffff;
 
       // XXX use timestamps with queryPool from call_evs here to measure execution time
 
-      vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+      vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, vfi.pipeline);
 
       std::vector<VkDescriptorSet> ds;
       ds.push_back(vfi.var_info.set);
@@ -798,7 +811,6 @@ const uint32_t U32_MAX = 0xffffffff;
 
       vkFreeMemory(device, ubo.mem, 0);
       vkDestroyBuffer(device, ubo.buf, 0);
-      vkDestroyPipeline(device, pipeline, 0);
 
       return call_id;
     }
