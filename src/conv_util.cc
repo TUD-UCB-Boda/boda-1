@@ -30,8 +30,8 @@ namespace boda
 
   conv_op_info_t const clone_coi{ "clone", {"in"}, {"out"}, };
   conv_op_info_t const sgemm_coi{ "sgemm", {"a","b"}, {"c"}, };
-  conv_op_info_t const Pooling_coi{ "Pooling", {"in"}, {"out"}, DefaultPoolingVals };
-  conv_op_info_t const Convolution_coi{ "Convolution", { "in", "filts", "biases" }, { "out" }, DefaultConvolutionVals };
+  conv_op_info_t const Pooling_coi{ "Pooling", {"in_buf"}, {"out_buf"}, DefaultPoolingVals };
+  conv_op_info_t const Convolution_coi{ "Convolution", { "in_buf", "filts", "biases" }, { "out_buf" }, DefaultConvolutionVals };
   conv_op_info_t const Deconvolution_coi{ "Deconvolution", { "in", "filts", "biases" },{ "out" }, DefaultConvolutionVals };
   conv_op_info_t const ReLU_coi{ "ReLU", {"in"}, {"out"} };
   conv_op_info_t const Scale_coi{ "Scale", {"in"}, {"out"} };

@@ -149,7 +149,7 @@ namespace boda
       uint32_t const out_chan_bias_smem_load_iter = u32_ceil_div( filts_x_stride, rcg->rtc_call_geom.tpb );
       rcg->set( "out_chan_bias_smem_load_iter", str(out_chan_bias_smem_load_iter) );
 
-      rcg->line( "biases_smem_loads","int32_t ocix; int32_t const ocix_base = %(GRP_ID_1D_out_chan_blk)*%(filts_x_stride);" );
+      rcg->line( "biases_smem_loads","uint32_t ocix; const uint32_t ocix_base = %(GRP_ID_1D_out_chan_blk)*%(filts_x_stride);" );
       for( uint32_t i = 0; i != out_chan_bias_smem_load_iter; ++i ) {
 	string const ixe = "(LOC_ID_1D + %(tpb) * "+str(i)+")";
 	string eif;
@@ -182,15 +182,15 @@ namespace boda
       }
       string const get_in = strprintf( 
 	"float v = 0;\n"
-	"      int const smem_in_ix_y = %%(out_pel_ix_y)*%%(stride_y_dim)+%%(filts_ix_out_chan_elem_y) - %%(in_pad_y_dim);\n"
-	"      int const smem_in_ix_x = %%(out_pel_ix_x)*%%(stride_x_dim)+%%(filts_ix_out_chan_elem_x) - %%(in_pad_x_dim);\n"
+	"      const uint smem_in_ix_y = %%(out_pel_ix_y)*%%(stride_y_dim)+%%(filts_ix_out_chan_elem_y) - %%(in_pad_y_dim);\n"
+	"      const uint smem_in_ix_x = %%(out_pel_ix_x)*%%(stride_x_dim)+%%(filts_ix_out_chan_elem_x) - %%(in_pad_x_dim);\n"
 	"      if(smem_in_ix_y >= 0 && smem_in_ix_x >= 0 && \n"
-	"          %%(out_pel_ix_img) < %%(in_img_dim) && \n"
-	"         smem_in_ix_x < %%(in_x_dim) && smem_in_ix_y < %%(in_y_dim) ) {\n"
-	"        v = in[%%(out_pel_ix_img)*%%(in_img_stride) +\n"
-	"          %%(filts_ix_out_chan_elem_in_chan)*%%(in_chan_stride) +\n"
-	"          smem_in_ix_y*%%(in_y_stride) +\n"
-	"          smem_in_ix_x*%%(in_x_stride)];\n" 
+	"          %%(out_pel_ix_img) < %%(in_buf_img_dim) && \n"
+	"         smem_in_ix_x < %%(in_buf_x_dim) && smem_in_ix_y < %%(in_buf_y_dim) ) {\n"
+	"        v = in_buf[%%(out_pel_ix_img)*%%(in_buf_img_stride) +\n"
+	"          %%(filts_ix_out_chan_elem_in_chan)*%%(in_buf_chan_stride) +\n"
+	"          smem_in_ix_y*%%(in_buf_y_stride) +\n"
+	"          smem_in_ix_x*%%(in_buf_x_stride)];\n" 
 	"      }"
 				       );
       rcg->set( "get_in", get_in );
@@ -202,17 +202,17 @@ namespace boda
 	rcg->line( "loads", strprintf( "in_strip[%s] = in_smem[%%(LOC_ID_1D_pels_tile)*%%(work_pels_dim)+%s];",
 					 str(ty).c_str(), str(ty).c_str() ) );
       }
-      rcg->line( "stores", "int32_t tpix[%(work_pels_dim)];");
-      rcg->line( "stores", "int32_t tcix[%(work_out_chan_dim)];");
+      rcg->line( "stores", "uint32_t tpix[%(work_pels_dim)];");
+      rcg->line( "stores", "uint32_t tcix[%(work_out_chan_dim)];");
       // FIXME: should somehow assert that both out_ix and pel_ix_N have the same dims here
       for( uint32_t ty = 0; ty != work.dsz( "pels" ); ++ty ) { 
 	rcg->line( "stores", 
-		   strprintf( "tpix[%s] = %%(pel_ix_%s_img)*%%(out_img_stride) + "
-			      "( %%(pel_ix_%s_x_nomod) %%%% (%%(out_y_dim)*%%(out_x_dim)) ); // cache out pel ixs ", // note: y:x adj-dim opt.
+		   strprintf( "tpix[%s] = %%(pel_ix_%s_img)*%%(out_buf_img_stride) + "
+			      "( %%(pel_ix_%s_x_nomod) %%%% (%%(out_buf_y_dim)*%%(out_buf_x_dim)) ); // cache out pel ixs ", // note: y:x adj-dim opt.
 				str(ty).c_str(), str(ty).c_str(), str(ty).c_str() ) );
       }
       for( uint32_t ty = 0; ty != work.dsz( "out_chan" ); ++ty ) { 
-	rcg->line( "stores", strprintf( "  tcix[%s] = (%%(out_chan_ix)+%s)*%%(out_chan_stride); // cache out chan ixs",
+	rcg->line( "stores", strprintf( "  tcix[%s] = (%%(out_chan_ix)+%s)*%%(out_buf_chan_stride); // cache out chan ixs",
 					  str(ty).c_str(), str(ty).c_str() ) );
       }	
       for( uint32_t ty = 0; ty != work.dsz( "pels" ); ++ty ) {
@@ -221,7 +221,7 @@ namespace boda
 	for( uint32_t tx = 0; tx != work.dsz( "out_chan" ); ++tx ) {
 	  rcg->line( "fmas", strprintf( "out_tile[%s] += filts_strip[%s]*in_strip[%s];", 
 					  str((ty*work.dsz( "out_chan" )+tx)).c_str(), str(tx).c_str(), str(ty).c_str() ) );
-	  rcg->line( "stores", strprintf( "if( tcix[%s] < (%%(out_chan_dim)*%%(out_chan_stride)) ) { out[ tpix[%s] + tcix[%s] ] = %s; }",
+	  rcg->line( "stores", strprintf( "if( tcix[%s] < (%%(out_buf_chan_dim)*%%(out_buf_chan_stride)) ) { out_buf[ tpix[%s] + tcix[%s] ] = %s; }",
 					    str(tx).c_str(), str(ty).c_str(), str(tx).c_str(), 
 					  add_bias_then_maybe_relu(rcg,work,tx,ty).c_str() ) );
 	}

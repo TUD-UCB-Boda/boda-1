@@ -296,11 +296,11 @@ namespace boda
 	// dims will remain unchanged at this value.
 	op->set_dims("out_ref",no_dims); 
 	// set final desired format for input. note: (1) original 'standard' format is stored as "in_ref" earlier (2)
-	// the dims of "in" may now differ from the dims of the global/rtc variable in the arg_map that "in" is bound
+	// the dims of "in_buf" may now differ from the dims of the global/rtc variable in the arg_map that "in_buf" is bound
 	// to. our convention is that we expect or detect this in codegen and emit the need xform at that point. when
-	// we do this, we may change the binding for "in" (e.g. to point to an xformed version of the original
+	// we do this, we may change the binding for "in_buf" (e.g. to point to an xformed version of the original
 	// variable).
-        op->reset_dims("in",in_dims); 
+        op->reset_dims("in_buf",in_dims); 
         if( is_k1_or_t_or_reg_conv( op->get_func_name() ) ) {
           op->reset_dims("filts",dims_t( vect_uint32_t{ work.dsz("out_chan_blk"),ni_dims.dsz("chan"), 
                   kern_sz_.d[1], kern_sz_.d[0],

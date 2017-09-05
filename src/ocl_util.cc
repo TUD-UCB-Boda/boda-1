@@ -213,6 +213,7 @@ __constant uint32_t const U32_MAX = 0xffffffff;
 #define START_ARG ,
 #define END_ARG
 #define FLOAT_CAST (float)
+#define INT_CAST(x) (int) x
 
 )rstr";
 

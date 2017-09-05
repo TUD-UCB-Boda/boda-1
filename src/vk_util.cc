@@ -26,6 +26,8 @@ namespace boda {
 
 #define CUCL_BACKEND_IX 3
 const uint32_t U32_MAX = 0xffffffff;
+const float FLT_MAX = /*0x1.fffffep127f*/ 340282346638528859811704183484516925440.0f;
+const float FLT_MIN = 1.175494350822287507969e-38f;
 // XXX figure this out later
 //typedef long long int64_t;
 #define CUCL_GLOBAL_KERNEL
@@ -51,6 +53,7 @@ const uint32_t U32_MAX = 0xffffffff;
 #define START_ARG
 #define END_ARG ;
 #define FLOAT_CAST
+#define INT_CAST(x) int(x)
 
 )rstr";
 
@@ -66,6 +69,7 @@ const uint32_t U32_MAX = 0xffffffff;
     VkPipeline pipeline;
     vk_descriptor_info_t var_info;
     vk_descriptor_info_t UBO_info;
+    vector<bool> is_buffer;
     #ifdef DEBUG
     uint32_t tpb;
     #endif
@@ -105,6 +109,7 @@ const uint32_t U32_MAX = 0xffffffff;
     VkPhysicalDeviceMemoryProperties mem_properties;
 
     vk_buffer_info_t staging_buffer;
+    vk_buffer_info_t null_buffer;
     size_t staging_sz = 0;
 
     VkQueue queue;
@@ -130,7 +135,7 @@ const uint32_t U32_MAX = 0xffffffff;
 							const char* msg,
 							void* user_data) {
 
-      std::cerr << "validation layer: " << msg << std::endl;
+      std::cout << "validation layer: " << msg << std::endl;
 
       return VK_FALSE;
     }
@@ -266,6 +271,12 @@ const uint32_t U32_MAX = 0xffffffff;
 
       BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(device, &command_buffer_allocate_info, &command_buffer));
 
+       
+      null_buffer = create_buffer_info(1, // XXX can't create buffers with size 0
+				       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+				       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+
       init_done.v = true;
     }
 
@@ -333,16 +344,21 @@ const uint32_t U32_MAX = 0xffffffff;
 	}
 	shaderc::Compiler compiler;
 	shaderc::CompileOptions options;
+	//std::cout << "compiling : " << i->func_name << std::endl;
 
 	options.SetOptimizationLevel(shaderc_optimization_level_size);
 	shaderc::SpvCompilationResult module =
 	  compiler.CompileGlslToSpv(src, shaderc_glsl_compute_shader, i->func_name.c_str(), options);
 
+	if (module.GetCompilationStatus() != shaderc_compilation_status_success) {
+	  std::cout << "failed to compile: " << i->func_name << std::endl <<
+	    "error message: " << std::endl << module.GetErrorMessage() << std::endl;
+	  BAIL_ON_BAD_RESULT(VK_INCOMPLETE);
+	}
+
 	std::vector<uint32_t> buffer;
 	buffer = {module.cbegin(), module.cend()};
-
-	if (buffer.size() == 0)
-	  BAIL_ON_BAD_RESULT(VK_INCOMPLETE);
+	
 
 	VkShaderModuleCreateInfo shader_module_create_info = {
 	  VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
@@ -357,13 +373,19 @@ const uint32_t U32_MAX = 0xffffffff;
 
 	vector<VkDescriptorSetLayoutBinding> var_bindings;
 	size_t bind_ix = 0;
-
+	vector<bool> is_buffer;
+	// XXX the whole arguments-handling code is rather messy and should be replaced with a cleaner/nicer solution
 	for (vect_arg_decl_t::const_iterator arg = i->arg_decls.begin(); arg != i->arg_decls.end(); ++arg ) {
 	  uint32_t const multi_sz = arg->get_multi_sz( i->op );
 	  for( uint32_t mix = 0; mix != multi_sz; ++mix ) {
-	    if (arg->loi.v == 0 || arg->io_type == "REF") // XXX handle DYN-REF
+	    if (arg->loi.v == 0 || arg->io_type == "REF"){ // XXX handle DYN-REF
+	      //std::cout << "skipped " << arg->vn << std::endl;
+	      is_buffer.push_back(false);
 	      break;
+	    }
 
+	    //std::cout << "added " << arg->vn << std::endl;
+	    is_buffer.push_back(true);
 	    // This argument will be passed via a storage buffer, so we setup its descriptor layout
 	    var_bindings.push_back({(uint32_t)bind_ix,
 		  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -383,6 +405,7 @@ const uint32_t U32_MAX = 0xffffffff;
 	};
 
 	vk_descriptor_info_t var_info = create_descriptor(&var_bindings[0], bind_ix, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	// XXX we may be able to avoid this if there is no data passed in via a UBO
 	vk_descriptor_info_t UBO_info = create_descriptor(&UBO_binding, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 
 	std::vector<VkDescriptorSetLayout> layouts;
@@ -435,18 +458,16 @@ const uint32_t U32_MAX = 0xffffffff;
 	VkPipeline pipeline;
 	BAIL_ON_BAD_RESULT(vkCreateComputePipelines(device, 0, 1, &compute_pipeline_create_info, 0, &pipeline));
 
-	must_insert(*kerns, i->func_name, vk_func_info_t{*i, shader_module, pipeline_layout, pipeline, var_info, UBO_info
+	must_insert(*kerns, i->func_name, vk_func_info_t{*i, shader_module, pipeline_layout, pipeline, var_info, UBO_info, is_buffer
 	      #ifdef DEBUG
 	      , (uint32_t) loc_work_sz
 	      #endif
 	      });
       }
-
     }
 
     // buf and mem of return value must be destroyed/freed
     vk_buffer_info_t create_buffer_info(VkDeviceSize size, VkBufferUsageFlags buffer_flags, VkMemoryPropertyFlags memory_flags) {
-
       const VkBufferCreateInfo buffer_create_info = {
 	VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 	0,
@@ -572,6 +593,7 @@ const uint32_t U32_MAX = 0xffffffff;
 
     void create_var_with_dims( string const & vn, dims_t const & dims ) {
       vk_var_info_t var;
+      assert(init_done.v);
       vk_buffer_info_t bo = create_buffer_info(dims.bytes_sz(),
 						 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 						 VK_BUFFER_USAGE_TRANSFER_DST_BIT |
@@ -657,7 +679,7 @@ const uint32_t U32_MAX = 0xffffffff;
     virtual float get_var_ready_delta( string const & vn1, string const & vn2 ) { return 0; }
 
     void release_func( string const & func_name ) {
-      std::cout << "releasing: " << func_name << std::endl;
+      //std::cout << "releasing: " << func_name << std::endl;
       vk_func_info_t func = must_find( *kerns, func_name );
       vkDestroyShaderModule(device, func.kern, 0);
       vkDestroyDescriptorPool(device, func.var_info.pool, 0);
@@ -674,11 +696,12 @@ const uint32_t U32_MAX = 0xffffffff;
       timer_t t1("vk run");
       vk_func_info_t const & vfi = must_find(*kerns, rfc.rtc_func_name.c_str());
       uint32_t var_ix = 0;
-
+      
       vector<rtc_arg_t> UBO_args;
       vector<rtc_arg_t> var_args;
       size_t UBO_sz = 0;
-
+      //std::cout << "running " << rfc.rtc_func_name << std::endl;
+      vector<bool>::const_iterator is_buffer = vfi.is_buffer.begin();
 
       for( vect_string::const_iterator i = vfi.info.arg_names.begin(); i != vfi.info.arg_names.end(); ++i ) {
 	map_str_rtc_arg_t::const_iterator ai = rfc.arg_map.find( *i );
@@ -687,22 +710,33 @@ const uint32_t U32_MAX = 0xffffffff;
 			       str((*i)).c_str() ) ); }
 
 	rtc_arg_t arg = ai->second;
-	if (arg.is_var()) {
+	if (is_buffer != vfi.is_buffer.end() && *is_buffer) {
+	  //std::cout << arg.n << " is var" << std::endl;
 	  var_args.push_back(arg);
 	  var_ix++;
 	} else if (arg.is_nda()) {
+  	  //std::cout << arg.n << " is nda" << std::endl;
 	  UBO_args.push_back(arg);
 	  // GLSL has no datatypes smaller than 4 bytes
 	  UBO_sz += (arg.v->rp_elems() ? arg.v->dims.bytes_sz() : 4);
+	} else {
+	  /* assumes that no pass-by-ptr arguments are created with CUCL, and that CUCL-generated 
+	     parameters are always at the end of the arguments list
+	   */
+	  assert(false); 
 	}
+	if (is_buffer != vfi.is_buffer.end())
+	  ++is_buffer;
       }
-      
-      vector<VkWriteDescriptorSet> descriptor_sets(var_ix+1);
-      vector<VkDescriptorBufferInfo> bi(var_ix+1); // XXX no need for vector
-      var_ix = 0;
 
+      int UBO_count = UBO_sz ? 1 : 0;
+      vector<VkWriteDescriptorSet> descriptor_sets(var_ix+UBO_count);
+      vector<VkDescriptorBufferInfo> bi(var_ix+UBO_count); // XXX no need for vector
+      var_ix = 0;
+      //std::cout << rfc.rtc_func_name << " " << UBO_sz << " " << UBO_count <<  std::endl;
+      
       for (rtc_arg_t arg : var_args) {
-	VkBuffer buf = must_find(*vis, arg.n).bo.buf;
+	VkBuffer buf = arg.is_var() ? must_find(*vis, arg.n).bo.buf : null_buffer.buf;
 	bi[var_ix] = {
 	  buf,
 	  0,
@@ -721,45 +755,46 @@ const uint32_t U32_MAX = 0xffffffff;
 	  0};
 	var_ix++;
       }
-      assert(var_ix == bi.size() -1);
+      assert(var_ix == bi.size()-UBO_count);
 
-      // XXX handle UBO_sz == 0
-      vk_buffer_info_t ubo = create_buffer_info(UBO_sz, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-						VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+      vk_buffer_info_t ubo;
+      if (UBO_count) {
+	ubo = create_buffer_info(UBO_sz, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+				 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-      char* dev_ptr;
-      BAIL_ON_BAD_RESULT(vkMapMemory(device, ubo.mem, 0, UBO_sz, 0, (void **) &dev_ptr));
-      size_t offset = 0;
-      for (rtc_arg_t arg : UBO_args) {
-	if (arg.v->rp_elems()) {
-	  memcpy(dev_ptr+offset, arg.v->rp_elems(), arg.v->dims.bytes_sz());
-	  offset += arg.v->dims.bytes_sz();
-	} else {
-	  offset += 4;
+	char* dev_ptr;
+	BAIL_ON_BAD_RESULT(vkMapMemory(device, ubo.mem, 0, UBO_sz, 0, (void **) &dev_ptr));
+	size_t offset = 0;
+	for (rtc_arg_t arg : UBO_args) {
+	  if (arg.v->rp_elems()) {
+	    memcpy(dev_ptr+offset, arg.v->rp_elems(), arg.v->dims.bytes_sz());
+	    offset += arg.v->dims.bytes_sz();
+	  } else {
+	    offset += 4;
+	  }
 	}
+
+	vkUnmapMemory(device, ubo.mem);
+
+	bi[var_ix] = {
+	  ubo.buf,
+	  0,
+	  VK_WHOLE_SIZE
+	};
+
+	descriptor_sets[var_ix] = {
+	  VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+	  0,
+	  vfi.UBO_info.set,
+	  0,
+	  0,
+	  1,
+	  VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+	  0,
+	  &bi[var_ix],
+	  0};
       }
-
-      vkUnmapMemory(device, ubo.mem);
-
-      bi[var_ix] = {
-	ubo.buf,
-	0,
-	VK_WHOLE_SIZE
-      };
-
-      descriptor_sets[var_ix] = {
-	VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-	0,
-	vfi.UBO_info.set,
-	0,
-	0,
-	1,
-	VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-	0,
-	&bi[var_ix],
-	0};
-
-      vkUpdateDescriptorSets(device, var_ix+1, descriptor_sets.data(), 0, 0);
+      vkUpdateDescriptorSets(device, var_ix+UBO_count, descriptor_sets.data(), 0, 0);
 
       uint32_t const call_id = alloc_call_id();
 
@@ -784,10 +819,11 @@ const uint32_t U32_MAX = 0xffffffff;
 
       std::vector<VkDescriptorSet> ds;
       ds.push_back(vfi.var_info.set);
-      ds.push_back(vfi.UBO_info.set);
+      if (UBO_count)
+	ds.push_back(vfi.UBO_info.set);
 
       vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
-			      vfi.pipeline_layout, 0, 2, ds.data(), 0, 0);
+			      vfi.pipeline_layout, 0, 1+UBO_count, ds.data(), 0, 0);
       vkCmdDispatch(command_buffer, glob_work_sz/loc_work_sz, 1, 1);
 
       BAIL_ON_BAD_RESULT(vkEndCommandBuffer(command_buffer));
@@ -808,30 +844,46 @@ const uint32_t U32_MAX = 0xffffffff;
       BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submit_info, 0));
       BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
       t.stop();
-
-      vkFreeMemory(device, ubo.mem, 0);
-      vkDestroyBuffer(device, ubo.buf, 0);
-
+      if (UBO_count) {
+	vkFreeMemory(device, ubo.mem, 0);
+	vkDestroyBuffer(device, ubo.buf, 0);
+      }
       return call_id;
     }
 
     void finish_and_sync( void ) { BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue)); }
 
     ~vk_compute_t() {
+      //assert(init_done.v);
       if (staging_sz != 0) {
 	vkFreeMemory(device, staging_buffer.mem, 0);
 	vkDestroyBuffer(device, staging_buffer.buf, 0);
       }
-      
+
+      if (!init_done.v)
+	return;
+      vkFreeMemory(device, null_buffer.mem, 0);
+      vkDestroyBuffer(device, null_buffer.buf, 0);
+
+      for (auto& v : *vis) {
+	vk_var_info_t var = v.second;
+	vkFreeMemory(device, var.bo.mem, 0);
+	vkDestroyBuffer(device, var.bo.buf, 0);
+      }
+	vis->clear();
+
+	release_all_funcs();
+	
+	vkDestroyCommandPool(device, command_pool, 0);
+
 #ifdef DEBUG
-      auto func = (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT");
-      BAIL_ON_BAD_RESULT(func == nullptr ? VK_ERROR_INITIALIZATION_FAILED : VK_SUCCESS);
-      func(instance, debug_report_callback, NULL);
+	auto func = (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT");
+	BAIL_ON_BAD_RESULT(func == nullptr ? VK_ERROR_INITIALIZATION_FAILED : VK_SUCCESS);
+	func(instance, debug_report_callback, NULL);
 #endif
-      release_all_funcs();
-      vkDestroyCommandPool(device, command_pool, 0);
-      vkDestroyDevice(device, 0);
-      vkDestroyInstance(instance, 0);
+	vkDestroyDevice(device, 0);
+
+	vkDestroyInstance(instance, 0); 
     }
 
     // FIXME: TODO

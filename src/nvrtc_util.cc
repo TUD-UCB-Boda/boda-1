@@ -182,6 +182,7 @@ float const FLT_MIN = 1.175494350822287507969e-38f;
 #define START_ARG ,
 #define END_ARG
 #define FLOAT_CAST (float)
+#define INT_CAST(x) (int) x
 
 )rstr";
 

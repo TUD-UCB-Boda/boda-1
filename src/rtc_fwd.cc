@@ -294,12 +294,12 @@ namespace boda
       assert_st( chans_in_done == oi->get_dims("in").dsz("chan") );
     } else if( oi->is( Pooling_coi ) ) {
       if( oi->get_u32("emit_out_in_yx") == 1 ) {
-	string const out_in_yx = oi->get_arg("out") + "_in_yx"; 
-	rtc->create_var_with_dims( out_in_yx, oi->get_dims("out") ); // same size as out
-	set_rtc_arg( oi, rtc, "out_in_yx", out_in_yx );
+	string const out_in_yx = oi->get_arg("out_buf") + "_in_yx"; 
+	rtc->create_var_with_dims( out_in_yx, oi->get_dims("out_buf") ); // same size as out
+	set_rtc_arg( oi, rtc, "out_buf_in_yx", out_in_yx );
       } else {
 	assert_st( oi->get_u32("emit_out_in_yx") == 0 );
-	oi->set_null_arg_dims( "out_in_yx", oi->get_dims("out") ); // proper dims, but no var will be passed at call time
+	oi->set_null_arg_dims( "out_buf_in_yx", oi->get_dims("out_buf") ); // proper dims, but no var will be passed at call time
       }
       gen_call( oi );
     } else if( oi->is( Convolution_coi ) ) {
@@ -311,7 +311,7 @@ namespace boda
 	oi->reset_arg( "filts", gen_apply_func_to_var( "filts_ref", oi->get_arg("filts"), "filts", oi->get_dims("filts"), 
 						       "xpose_filts", oi ) );
       }
-      string const in_id = oi->get_arg("in");
+      string const in_id = oi->get_arg("in_buf");
       // note: as this point: oi->get_dims("in") may not == rtc->get_var_dims( in_id ); see comment in init()
       if( oi->get_func_name() == tconv_str ) {
 	// assume input needs the below xform and apply it. FIXME(?): fails if vars are in unexpected formats.
@@ -325,7 +325,7 @@ namespace boda
 	} 	
       } 
       // FIXME: perhaps all ops should create outputs. but for now, only conv can have non-reference output dims ...
-      rtc->create_var_with_dims( oi->get_arg("out"), oi->get_dims("out") ); 
+      rtc->create_var_with_dims( oi->get_arg("out_buf"), oi->get_dims("out_buf") ); 
       gen_call( oi );
     } else if( oi->is( ReLU_coi ) ) {
       assert_st( oi->get_arg("in") == oi->get_arg("out") ); // check that this is a single in-out in-place operation
@@ -486,7 +486,7 @@ namespace boda
     for( map_str_p_conv_op_t::iterator i = cp->convs->begin(); i != cp->convs->end(); ++i ) { 
       p_conv_op_t const & oi = must_find( *op_infos, i->first );
       if( oi->is( Convolution_coi ) ) {
-	p_conv_node_t no = cp->must_get_node( oi->get_arg("out") ); // aka oi->coi->top_an(0) ...
+	p_conv_node_t no = cp->must_get_node( oi->get_arg("out_buf") ); // aka oi->coi->top_an(0) ...
 	bool const conv_has_relu = (no->in_place_ops.size() > 0) && (no->in_place_ops[0]->is(ReLU_coi));
 	// mark relu as fused-away; mark conv as having fused-on relu // NOTE/FIXME(?): relu may be not-init()-yet here ...
 	if( conv_has_relu ) { must_find( *op_infos, no->in_place_ops[0]->tag )->set_u32( "fused", 1 ); } 
