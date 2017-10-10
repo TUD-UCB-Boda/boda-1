@@ -182,8 +182,8 @@ namespace boda
       }
       string const get_in = strprintf( 
 	"float v = 0;\n"
-	"      const uint smem_in_ix_y = %%(out_pel_ix_y)*%%(stride_y_dim)+%%(filts_ix_out_chan_elem_y) - %%(in_pad_y_dim);\n"
-	"      const uint smem_in_ix_x = %%(out_pel_ix_x)*%%(stride_x_dim)+%%(filts_ix_out_chan_elem_x) - %%(in_pad_x_dim);\n"
+	"      const uint32_t smem_in_ix_y = %%(out_pel_ix_y)*%%(stride_y_dim)+%%(filts_ix_out_chan_elem_y) - %%(in_pad_y_dim);\n"
+	"      const uint32_t smem_in_ix_x = %%(out_pel_ix_x)*%%(stride_x_dim)+%%(filts_ix_out_chan_elem_x) - %%(in_pad_x_dim);\n"
 	"      if(smem_in_ix_y >= 0 && smem_in_ix_x >= 0 && \n"
 	"          %%(out_pel_ix_img) < %%(in_buf_img_dim) && \n"
 	"         smem_in_ix_x < %%(in_buf_x_dim) && smem_in_ix_y < %%(in_buf_y_dim) ) {\n"
