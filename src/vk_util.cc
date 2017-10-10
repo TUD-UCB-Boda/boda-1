@@ -8,6 +8,7 @@
 #include <shaderc/shaderc.hpp>
 
 #define DEBUG
+//#define DIRECT_GLSL
 
 namespace boda {
   // XXX improve/implement error handling
@@ -231,6 +232,10 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	&queue_priority
       };
 
+      vector<const char*> dev_extensions;
+      #ifdef DIRECT_GLSL
+      dev_extensions.push_back("VK_NV_glsl_shader");
+      #endif
       // XXX device extensions and layers
       const VkDeviceCreateInfo device_create_info = {
 	VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -240,8 +245,8 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	&deviceQueueCreateInfo,
 	0,
 	0,
-	0,
-	0,
+	(uint32_t) dev_extensions.size(),
+	dev_extensions.data(),
 	0
       };
 
@@ -342,6 +347,17 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	  p_ostream out = ofs_open( strprintf( "%s/%s_%d.glsl", gen_src_output_dir.exp.c_str(), i->func_name.c_str(), (int) (i - func_infos.begin())));
 	  (*out) << src << std::flush;
 	}
+	
+	#ifdef DIRECT_GLSL
+	VkShaderModuleCreateInfo shader_module_create_info = {
+	  VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+	  0,
+	  0,
+	  src.length()+1,
+	  (uint32_t*) src.c_str()
+	};
+	
+	#else
 	shaderc::Compiler compiler;
 	shaderc::CompileOptions options;
 	//std::cout << "compiling : " << i->func_name << std::endl;
@@ -367,7 +383,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	  buffer.size() * sizeof(uint32_t),
 	  buffer.data()
 	};
-
+	#endif
 	VkShaderModule shader_module;
 	BAIL_ON_BAD_RESULT(vkCreateShaderModule(device, &shader_module_create_info, 0, &shader_module));
 
