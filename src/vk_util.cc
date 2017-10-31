@@ -69,7 +69,6 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
     VkPipelineLayout pipeline_layout;
     VkPipeline pipeline;
     vk_descriptor_info_t var_info;
-    vk_descriptor_info_t UBO_info;
     vector<bool> is_buffer;
     #ifdef DEBUG
     uint32_t tpb;
@@ -412,27 +411,25 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	  }
 	}
 
-	VkDescriptorSetLayoutBinding UBO_binding = {
-	  0,
-	  VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-	  1,
-	  VK_SHADER_STAGE_COMPUTE_BIT,
-	  0
-	};
-
-	vk_descriptor_info_t var_info = create_descriptor(&var_bindings[0], bind_ix, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	// XXX we may be able to avoid this if there is no data passed in via a UBO
-	vk_descriptor_info_t UBO_info = create_descriptor(&UBO_binding, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	// one binding to pass all non-var args
+	// XXX not necessary if such args are not present
+	var_bindings.push_back({(uint32_t)bind_ix,
+	      VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+	      1,
+	      VK_SHADER_STAGE_COMPUTE_BIT,
+	      0});
+	bind_ix++;
+	
+	vk_descriptor_info_t var_info = create_descriptor(var_bindings.data(), bind_ix, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
 	std::vector<VkDescriptorSetLayout> layouts;
 	layouts.push_back(var_info.layout);
-	layouts.push_back(UBO_info.layout);
 
 	VkPipelineLayoutCreateInfo pipeline_layout_create_info = {
 	  VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 	  0,
 	  0,
-	  2,
+	  1,
 	  layouts.data(),
 	  0,
 	  0
@@ -474,7 +471,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	VkPipeline pipeline;
 	BAIL_ON_BAD_RESULT(vkCreateComputePipelines(device, 0, 1, &compute_pipeline_create_info, 0, &pipeline));
 
-	must_insert(*kerns, i->func_name, vk_func_info_t{*i, shader_module, pipeline_layout, pipeline, var_info, UBO_info, is_buffer
+	must_insert(*kerns, i->func_name, vk_func_info_t{*i, shader_module, pipeline_layout, pipeline, var_info, is_buffer
 	      #ifdef DEBUG
 	      , (uint32_t) loc_work_sz
 	      #endif
@@ -639,9 +636,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	vk_func_info_t func = must_find( *kerns, f.first );
 	vkDestroyShaderModule(device, func.kern, 0);
 	vkDestroyDescriptorPool(device, func.var_info.pool, 0);
-	vkDestroyDescriptorPool(device, func.UBO_info.pool, 0);
 	vkDestroyDescriptorSetLayout(device, func.var_info.layout, 0);
-	vkDestroyDescriptorSetLayout(device, func.UBO_info.layout, 0);
 	vkDestroyPipeline(device, func.pipeline, 0);
 	vkDestroyPipelineLayout(device, func.pipeline_layout, 0);
       }
@@ -708,9 +703,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       vk_func_info_t func = must_find( *kerns, func_name );
       vkDestroyShaderModule(device, func.kern, 0);
       vkDestroyDescriptorPool(device, func.var_info.pool, 0);
-      vkDestroyDescriptorPool(device, func.UBO_info.pool, 0);
       vkDestroyDescriptorSetLayout(device, func.var_info.layout, 0);
-      vkDestroyDescriptorSetLayout(device, func.UBO_info.layout, 0);
       vkDestroyPipeline(device, func.pipeline, 0);
       vkDestroyPipelineLayout(device, func.pipeline_layout, 0);
       must_erase( *kerns, func_name );
@@ -722,9 +715,9 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       vk_func_info_t const & vfi = must_find(*kerns, rfc.rtc_func_name.c_str());
       uint32_t var_ix = 0;
       
-      vector<rtc_arg_t> UBO_args;
+      vector<rtc_arg_t> POD_args;
       vector<rtc_arg_t> var_args;
-      size_t UBO_sz = 0;
+      size_t POD_sz = 0;
       //std::cout << "running " << rfc.rtc_func_name << std::endl;
       vector<bool>::const_iterator is_buffer = vfi.is_buffer.begin();
 
@@ -741,9 +734,9 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	  var_ix++;
 	} else if (arg.is_nda()) {
   	  //std::cout << arg.n << " is nda" << std::endl;
-	  UBO_args.push_back(arg);
+	  POD_args.push_back(arg);
 	  // GLSL has no datatypes smaller than 4 bytes
-	  UBO_sz += (arg.v->rp_elems() ? arg.v->dims.bytes_sz() : 4);
+	  POD_sz += (arg.v->rp_elems() ? arg.v->dims.bytes_sz() : 4);
 	} else {
 	  /* assumes that no pass-by-ptr arguments are created with CUCL, and that CUCL-generated 
 	     parameters are always at the end of the arguments list
@@ -754,9 +747,9 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	  ++is_buffer;
       }
 
-      int UBO_count = UBO_sz ? 1 : 0;
-      vector<VkWriteDescriptorSet> descriptor_sets(var_ix+UBO_count);
-      vector<VkDescriptorBufferInfo> bi(var_ix+UBO_count); // XXX no need for vector
+      int POD_count = POD_sz ? 1 : 0;
+      vector<VkWriteDescriptorSet> descriptor_sets(var_ix+POD_count);
+      vector<VkDescriptorBufferInfo> bi(var_ix+POD_count); // XXX no need for vector
       var_ix = 0;
       //std::cout << rfc.rtc_func_name << " " << UBO_sz << " " << UBO_count <<  std::endl;
       
@@ -780,17 +773,17 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	  0};
 	var_ix++;
       }
-      assert(var_ix == bi.size()-UBO_count);
+      assert(var_ix == bi.size()-POD_count);
 
-      vk_buffer_info_t ubo;
-      if (UBO_count) {
-	ubo = create_buffer_info(UBO_sz, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+      vk_buffer_info_t pod;
+      if (POD_count) {
+	pod = create_buffer_info(POD_sz, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 				 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
 	char* dev_ptr;
-	BAIL_ON_BAD_RESULT(vkMapMemory(device, ubo.mem, 0, UBO_sz, 0, (void **) &dev_ptr));
+	BAIL_ON_BAD_RESULT(vkMapMemory(device, pod.mem, 0, POD_sz, 0, (void **) &dev_ptr));
 	size_t offset = 0;
-	for (rtc_arg_t arg : UBO_args) {
+	for (rtc_arg_t arg : POD_args) {
 	  if (arg.v->rp_elems()) {
 	    memcpy(dev_ptr+offset, arg.v->rp_elems(), arg.v->dims.bytes_sz());
 	    offset += arg.v->dims.bytes_sz();
@@ -799,10 +792,10 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	  }
 	}
 
-	vkUnmapMemory(device, ubo.mem);
+	vkUnmapMemory(device, pod.mem);
 
 	bi[var_ix] = {
-	  ubo.buf,
+	  pod.buf,
 	  0,
 	  VK_WHOLE_SIZE
 	};
@@ -810,16 +803,16 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	descriptor_sets[var_ix] = {
 	  VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 	  0,
-	  vfi.UBO_info.set,
-	  0,
+	  vfi.var_info.set,
+	  var_ix,
 	  0,
 	  1,
-	  VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+	  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 	  0,
 	  &bi[var_ix],
 	  0};
       }
-      vkUpdateDescriptorSets(device, var_ix+UBO_count, descriptor_sets.data(), 0, 0);
+      vkUpdateDescriptorSets(device, var_ix+POD_count, descriptor_sets.data(), 0, 0);
 
       uint32_t const call_id = alloc_call_id();
 
@@ -846,13 +839,9 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 
       vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, vfi.pipeline);
 
-      std::vector<VkDescriptorSet> ds;
-      ds.push_back(vfi.var_info.set);
-      if (UBO_count)
-	ds.push_back(vfi.UBO_info.set);
 
       vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
-			      vfi.pipeline_layout, 0, 1+UBO_count, ds.data(), 0, 0);
+			      vfi.pipeline_layout, 0, 1, &vfi.var_info.set, 0, 0);
       vkCmdDispatch(command_buffer, glob_work_sz/loc_work_sz, 1, 1);
 
       vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
@@ -875,9 +864,9 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submit_info, 0));
       BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
       
-      if (UBO_count) {
-	vkFreeMemory(device, ubo.mem, 0);
-	vkDestroyBuffer(device, ubo.buf, 0);
+      if (POD_count) {
+	vkFreeMemory(device, pod.mem, 0);
+	vkDestroyBuffer(device, pod.buf, 0);
       }
       return call_id;
     }

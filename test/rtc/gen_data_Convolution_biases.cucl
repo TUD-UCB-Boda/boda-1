@@ -7,7 +7,7 @@ layout(set = 0, binding = 0) buffer biases_t{
   float biases[];
 };
 
-layout (set = 1, binding = 0) uniform UBO
+layout (set = 0, binding = 1) buffer POD
 {
   uint32_t mode;
   float vi;

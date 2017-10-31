@@ -9,7 +9,7 @@ layout(set = 0, binding = 1) buffer out_t{
 layout(set = 0, binding = 2) buffer out_in_yx_t{
   float out_buf_in_yx[];
 };
-layout (set = 1, binding = 0) uniform UBO
+layout (set = 0, binding = 3) buffer POD
 {
   uint32_t avg_pool;
   uint32_t emit_out_in_yx;

@@ -10,7 +10,7 @@ layout(set = 0, binding = 2) buffer matrix_c{
   %(c_tn) c[];
 };
 
-layout (set = 1, binding = 0) uniform UBO
+layout (set = 0, binding = 3) buffer POD
 {
   int work;
 };

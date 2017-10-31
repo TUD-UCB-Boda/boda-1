@@ -13,7 +13,7 @@ layout(set = 0, binding = 3) buffer out_t{
   float out_buf[];
 };
 
-layout (set = 1, binding = 0) uniform UBO
+layout (set = 0, binding = 4) buffer POD
 {
   int stride;
   int in_pad;
