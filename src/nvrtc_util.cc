@@ -364,7 +364,6 @@ float const FLT_MIN = 1.175494350822287507969e-38f;
       record_event( get_call_ev(call_id).e_ev );
       //record_var_events( rfc.inout_args, rfc );
       //record_var_events( rfc.out_args, rfc );
-      cuCtxSynchronize();
       return call_id;
     }
 

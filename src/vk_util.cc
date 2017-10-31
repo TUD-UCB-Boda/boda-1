@@ -687,8 +687,17 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
     } // invalidates all call_ids inside rtc_func_call_t's
 
     virtual float get_dur( uint32_t const & b, uint32_t const & e ) {
-      // XXX implement
-      return 0;
+      uint64_t timestamps_b[2];
+      BAIL_ON_BAD_RESULT(vkGetQueryPoolResults(device, call_evs[b], 0, 2, 2*sizeof(uint64_t),
+					       &(timestamps_b[0]), sizeof(uint64_t),  VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT));
+      
+      uint64_t timestamps_e[2];
+      BAIL_ON_BAD_RESULT(vkGetQueryPoolResults(device, call_evs[e], 0, 2, 2*sizeof(uint64_t),
+					       &(timestamps_e[0]), sizeof(uint64_t),  VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT));
+      uint64_t dur_i = timestamps_e[1]-timestamps_b[0];
+      float dur_f = ((float)dur_i)*1.0e-6;
+
+      return dur_f;
     }
 
     virtual float get_var_compute_dur( string const & vn ) { return 0; }
@@ -829,7 +838,11 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 
       BAIL_ON_BAD_RESULT(vkBeginCommandBuffer(command_buffer, &command_buffer_begin_info));
 
-      // XXX use timestamps with queryPool from call_evs here to measure execution time
+      vkCmdResetQueryPool(command_buffer, call_evs[call_id], 0, 1);
+      
+      vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+			  call_evs[call_id], 0);
+
 
       vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, vfi.pipeline);
 
@@ -841,6 +854,9 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
 			      vfi.pipeline_layout, 0, 1+UBO_count, ds.data(), 0, 0);
       vkCmdDispatch(command_buffer, glob_work_sz/loc_work_sz, 1, 1);
+
+      vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+			  call_evs[call_id], 1);
 
       BAIL_ON_BAD_RESULT(vkEndCommandBuffer(command_buffer));
 
@@ -856,10 +872,9 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	0
       };
 
-      timer_t t("vk kernel");
       BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submit_info, 0));
       BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
-      t.stop();
+      
       if (UBO_count) {
 	vkFreeMemory(device, ubo.mem, 0);
 	vkDestroyBuffer(device, ubo.buf, 0);
