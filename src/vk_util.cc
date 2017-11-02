@@ -1,14 +1,15 @@
 // XXX include ordering important?
-#include"boda_tu_base.H"
 #include"rtc_compute.H"
 #include "str_util.H"
 #include "timers.H"
 #include "vulkan.h"
 #include <iostream>
 #include <shaderc/shaderc.hpp>
+#include <stdlib.h>
 
 #define DEBUG
 //#define DIRECT_GLSL
+#define CLSPV
 
 namespace boda {
   // XXX improve/implement error handling
@@ -149,7 +150,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	0,
 	"",
 	0,
-	VK_MAKE_VERSION(1, 0, 9) // XXX check
+	VK_MAKE_VERSION(1, 0, 61) // XXX check
       };
 
       vector<const char*> layers;
@@ -334,57 +335,120 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       return {layout, descriptor_pool, descriptor_set};
     }
 
+    VkShaderModule getSMCIFromGLSLC(string src, string func_name) {
+      shaderc::Compiler compiler;
+      shaderc::CompileOptions options;
+      //std::cout << "compiling : " << i->func_name << std::endl;
+
+      options.SetOptimizationLevel(shaderc_optimization_level_size);
+      shaderc::SpvCompilationResult module =
+	compiler.CompileGlslToSpv(src, shaderc_glsl_compute_shader, func_name.c_str(), options);
+
+      if (module.GetCompilationStatus() != shaderc_compilation_status_success) {
+	std::cout << "failed to compile: " << func_name << std::endl <<
+	  "error message: " << std::endl << module.GetErrorMessage() << std::endl;
+	BAIL_ON_BAD_RESULT(VK_INCOMPLETE);
+      }
+
+      std::vector<uint32_t> buffer;
+      buffer = {module.cbegin(), module.cend()};
+	
+
+      VkShaderModuleCreateInfo shader_module_create_info = {
+	VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+	0,
+	0,
+	buffer.size() * sizeof(uint32_t),
+	buffer.data()
+      };
+      VkShaderModule shader_module;
+      BAIL_ON_BAD_RESULT(vkCreateShaderModule(device, &shader_module_create_info, 0, &shader_module));
+      return shader_module;
+    }
+
+    VkShaderModule getSMCIFromPlainGLSL(string src) {
+      VkShaderModuleCreateInfo shader_module_create_info = {
+	VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+	0,
+	0,
+	src.length()+1,
+	(uint32_t*) src.c_str()
+      };
+	
+      VkShaderModule shader_module;
+      BAIL_ON_BAD_RESULT(vkCreateShaderModule(device, &shader_module_create_info, 0, &shader_module));
+      return shader_module;
+    }
+
+    VkShaderModule getSMCIFromClspv(string src, string func_name, int pos) { 
+      ensure_is_dir( gen_src_output_dir.exp, 1 );
+      
+      p_ostream out = ofs_open( strprintf( "%s/%s_%d.cl", gen_src_output_dir.exp.c_str(), func_name.c_str(), pos));
+      (*out) << src << std::flush;
+      system(("/home/jschulte/vulkan_backend/clspv_/build/bin/clspv -cluster-pod-kernel-args " +
+	      gen_src_output_dir.exp + "/" + func_name + "_" + std::to_string(pos) + ".cl -o " +
+	      gen_src_output_dir.exp + "/" + func_name + "_" + std::to_string(pos) + ".spv").c_str());
+
+      system(("/home/jschulte/vulkan/VulkanSDK/1.0.61.1/x86_64/bin/spirv-opt --inline-entry-points-exhaustive --merge-blocks --eliminate-dead-branches --eliminate-dead-code-aggressive " +
+	      gen_src_output_dir.exp + "/" + func_name + "_" + std::to_string(pos) + ".spv -o " +
+	      gen_src_output_dir.exp + "/" + func_name + "_" + std::to_string(pos) + "_opt.spv").c_str());
+      
+      std::ifstream is;
+      is.open(gen_src_output_dir.exp + "/" + func_name + "_" + std::to_string(pos) + "_opt.spv", std::ios::binary);
+      is.seekg(0, std::ios::end);
+      size_t size = is.tellg();
+      is.seekg(0, std::ios::beg);
+
+      std::vector<uint32_t> buffer;
+      buffer.resize(size/sizeof(uint32_t) + (size%sizeof(uint32_t)?1U:0U));
+      is.read((char *) buffer.data(), size);
+      VkShaderModuleCreateInfo shader_module_create_info = {
+	VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+	0,
+	0,
+	buffer.size() * sizeof(uint32_t),
+	buffer.data()
+      };
+      
+      VkShaderModule shader_module;
+      BAIL_ON_BAD_RESULT(vkCreateShaderModule(device, &shader_module_create_info, 0, &shader_module));
+      return shader_module;
+    }
+    
     void compile( vect_rtc_func_info_t const & func_infos, rtc_compile_opts_t const & opts) {
       assert (init_done.v);
       timer_t t("vk compile");
       if (func_infos.empty()) return;
 
       for( vect_rtc_func_info_t::const_iterator i = func_infos.begin(); i != func_infos.end(); ++i ) {
+	#ifdef CLSPV
+	bool fallback = !i->func_name.compare(0, 4, "pool") || !i->func_name.compare(0,3,"gen");
+	string src;
+	if (fallback)
+	  src = vk_base_decls + get_rtc_base_decls() + i->func_src;
+	else
+	  src = ocl_base_decls + get_rtc_base_decls() + i->func_src;
+	#else
 	string src = vk_base_decls + get_rtc_base_decls() + i->func_src;
 	if( gen_src ) {
 	  ensure_is_dir( gen_src_output_dir.exp, 1 );
 	  p_ostream out = ofs_open( strprintf( "%s/%s_%d.glsl", gen_src_output_dir.exp.c_str(), i->func_name.c_str(), (int) (i - func_infos.begin())));
 	  (*out) << src << std::flush;
 	}
-	
-	#ifdef DIRECT_GLSL
-	VkShaderModuleCreateInfo shader_module_create_info = {
-	  VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-	  0,
-	  0,
-	  src.length()+1,
-	  (uint32_t*) src.c_str()
-	};
-	
-	#else
-	shaderc::Compiler compiler;
-	shaderc::CompileOptions options;
-	//std::cout << "compiling : " << i->func_name << std::endl;
-
-	options.SetOptimizationLevel(shaderc_optimization_level_size);
-	shaderc::SpvCompilationResult module =
-	  compiler.CompileGlslToSpv(src, shaderc_glsl_compute_shader, i->func_name.c_str(), options);
-
-	if (module.GetCompilationStatus() != shaderc_compilation_status_success) {
-	  std::cout << "failed to compile: " << i->func_name << std::endl <<
-	    "error message: " << std::endl << module.GetErrorMessage() << std::endl;
-	  BAIL_ON_BAD_RESULT(VK_INCOMPLETE);
-	}
-
-	std::vector<uint32_t> buffer;
-	buffer = {module.cbegin(), module.cend()};
-	
-
-	VkShaderModuleCreateInfo shader_module_create_info = {
-	  VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-	  0,
-	  0,
-	  buffer.size() * sizeof(uint32_t),
-	  buffer.data()
-	};
 	#endif
+	#ifdef CLSPV
 	VkShaderModule shader_module;
-	BAIL_ON_BAD_RESULT(vkCreateShaderModule(device, &shader_module_create_info, 0, &shader_module));
+	if (fallback)
+	  shader_module = getSMCIFromGLSLC(src, i->func_name);
+	else
+	  shader_module = getSMCIFromClspv(src, i->func_name, i - func_infos.begin());
+	#else
+	#ifdef DIRECT_GLSL
+	VkShaderModule shader_module = getSMCIFromPlainGLSL(src);
+	#else
+	VkShaderModule shader_module = getSMCIFromGLSLC(src, i->func_name);
+        #endif
+	#endif
 
 	vector<VkDescriptorSetLayoutBinding> var_bindings;
 	size_t bind_ix = 0;
@@ -436,8 +500,8 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	};
 
 	VkPipelineLayout pipeline_layout;
-	BAIL_ON_BAD_RESULT(vkCreatePipelineLayout(device, &pipeline_layout_create_info, 0, &pipeline_layout));
-
+        BAIL_ON_BAD_RESULT(vkCreatePipelineLayout(device, &pipeline_layout_create_info, 0, &pipeline_layout));
+	
 	size_t const loc_work_sz = i->tpb;
 	const VkSpecializationMapEntry entries[] =
 	// id,  offset,                size
@@ -460,7 +524,11 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	    0,
 	    VK_SHADER_STAGE_COMPUTE_BIT,
 	    shader_module,
+	    #ifdef CLSPV
+	    fallback ? "main" : i->func_name.c_str(),
+	    #else
 	    "main",
+	    #endif
 	    &spec_info
 	  },
 	  pipeline_layout,
@@ -469,7 +537,10 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	};
 
 	VkPipeline pipeline;
-	BAIL_ON_BAD_RESULT(vkCreateComputePipelines(device, 0, 1, &compute_pipeline_create_info, 0, &pipeline));
+	//BAIL_ON_BAD_RESULT(vkCreateComputePipelines(device, 0, 1, &compute_pipeline_create_info, 0, &pipeline));
+	
+	if (vkCreateComputePipelines(device, 0, 1, &compute_pipeline_create_info, 0, &pipeline) != VK_SUCCESS)
+	  printf("error");
 
 	must_insert(*kerns, i->func_name, vk_func_info_t{*i, shader_module, pipeline_layout, pipeline, var_info, is_buffer
 	      #ifdef DEBUG

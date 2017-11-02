@@ -6,6 +6,7 @@
 #include"op_base.H"
 namespace boda 
 {
+  extern string ocl_base_decls;
   struct rtc_compile_opts_t : virtual public nesi // NESI(help="runtime compilation options") 
   {
     virtual cinfo_t const * get_cinfo( void ) const; // required declaration for NESI support
