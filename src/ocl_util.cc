@@ -218,7 +218,6 @@ __constant uint32_t const U32_MAX = 0xffffffff;
 
 )rstr";
 
-
   struct ocl_compute_t : virtual public nesi, public rtc_compute_t // NESI(help="OpenCL based rtc support",
 			   // bases=["rtc_compute_t"], type_id="ocl" )
   {
@@ -432,8 +431,11 @@ __constant uint32_t const U32_MAX = 0xffffffff;
                               str(loc_work_sz).c_str(), str(kwgs).c_str() ) );
       }
       cl_event ev = 0;
+      //timer_t t("ocl kernel");
       cl_int const err = clEnqueueNDRangeKernel( cq.v, ofi.kern.v, 1, 0, &glob_work_sz, &loc_work_sz, 0, 0, &ev);
       cl_err_chk( err, "clEnqueueNDRangeKernel()" );
+      //clWaitForEvents(1, &ev);
+      //t.stop();
       get_call_ev(call_id).reset(ev);
       return call_id;
     }

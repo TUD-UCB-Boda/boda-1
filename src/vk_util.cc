@@ -6,10 +6,12 @@
 #include <iostream>
 #include <shaderc/shaderc.hpp>
 #include <stdlib.h>
+#include <list>
 
 #define DEBUG
 //#define DIRECT_GLSL
-#define CLSPV
+//#define CLSPV
+#define KERNELS_PER_BUFFER 8
 
 namespace boda {
   // XXX improve/implement error handling
@@ -59,17 +61,12 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 
 )rstr";
 
-  struct vk_descriptor_info_t {
-    VkDescriptorSetLayout layout;
-    VkDescriptorPool pool;
-    VkDescriptorSet set;
-  };
   struct vk_func_info_t {
     rtc_func_info_t info;
     VkShaderModule kern;
     VkPipelineLayout pipeline_layout;
     VkPipeline pipeline;
-    vk_descriptor_info_t var_info;
+    VkDescriptorSetLayout layout;
     vector<bool> is_buffer;
     #ifdef DEBUG
     uint32_t tpb;
@@ -90,6 +87,13 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
   struct vk_var_info_t {
     vk_buffer_info_t bo;
     dims_t dims;
+  };
+
+  struct command_buffer_t {
+    VkCommandBuffer vk_cb;
+    VkFence fence;
+    std::list<vk_buffer_info_t> pods;
+    std::list<VkDescriptorPool> pools;
   };
 
   typedef map < string, vk_var_info_t > map_str_vk_var_info_t;
@@ -118,7 +122,9 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
     uint32_t queue_family_index;
 
     VkCommandPool command_pool;
-    VkCommandBuffer command_buffer;
+    command_buffer_t* current_command_buffer = 0;
+    std::list<command_buffer_t> command_buffers;
+    int submitted_kernels = 0;
     zi_bool init_done;
 
     p_map_str_vk_var_info_t vis;
@@ -265,17 +271,6 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       };
 
       BAIL_ON_BAD_RESULT(vkCreateCommandPool(device, &command_pool_create_info, 0, &command_pool));
-
-      VkCommandBufferAllocateInfo command_buffer_allocate_info = {
-	VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-	0,
-	command_pool,
-	VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-	1
-      };
-
-      BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(device, &command_buffer_allocate_info, &command_buffer));
-
        
       null_buffer = create_buffer_info(1, // XXX can't create buffers with size 0
 				       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -290,50 +285,6 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       return "vk";
     }
 
-    vk_descriptor_info_t create_descriptor(VkDescriptorSetLayoutBinding *bindings, size_t num_bindings, VkDescriptorType desc_type) {
-      VkDescriptorSetLayoutCreateInfo layout_create_info = {
-	VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-	0,
-	0,
-	(uint32_t)num_bindings,
-	bindings
-      };
-
-      VkDescriptorSetLayout layout;
-      BAIL_ON_BAD_RESULT(vkCreateDescriptorSetLayout(device, &layout_create_info, 0, &layout));
-
-
-      VkDescriptorPoolSize descriptor_pool_size = {
-	desc_type,
-	(uint32_t) num_bindings
-      };
-
-      VkDescriptorPoolCreateInfo descriptor_pool_create_info = {
-	VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-	0,
-	0,
-	1,
-	1,
-	&descriptor_pool_size
-      };
-
-      VkDescriptorPool descriptor_pool;
-      BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &descriptor_pool_create_info, 0, &descriptor_pool));
-
-
-      VkDescriptorSetAllocateInfo descriptor_set_allocate_info = {
-	VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-	0,
-	descriptor_pool,
-	1,
-	&layout
-      };
-
-      VkDescriptorSet descriptor_set;
-      BAIL_ON_BAD_RESULT(vkAllocateDescriptorSets(device, &descriptor_set_allocate_info, &descriptor_set));
-
-      return {layout, descriptor_pool, descriptor_set};
-    }
 
     VkShaderModule getSMCIFromGLSLC(string src, string func_name) {
       shaderc::Compiler compiler;
@@ -484,10 +435,19 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	      0});
 	bind_ix++;
 	
-	vk_descriptor_info_t var_info = create_descriptor(var_bindings.data(), bind_ix, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	VkDescriptorSetLayoutCreateInfo layout_create_info = {
+	  VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+	  0,
+	  0,
+	  (uint32_t)bind_ix,
+	  var_bindings.data()
+	};
 
+	VkDescriptorSetLayout layout;
+	BAIL_ON_BAD_RESULT(vkCreateDescriptorSetLayout(device, &layout_create_info, 0, &layout));
+      
 	std::vector<VkDescriptorSetLayout> layouts;
-	layouts.push_back(var_info.layout);
+	layouts.push_back(layout);
 
 	VkPipelineLayoutCreateInfo pipeline_layout_create_info = {
 	  VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -542,7 +502,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	if (vkCreateComputePipelines(device, 0, 1, &compute_pipeline_create_info, 0, &pipeline) != VK_SUCCESS)
 	  printf("error");
 
-	must_insert(*kerns, i->func_name, vk_func_info_t{*i, shader_module, pipeline_layout, pipeline, var_info, is_buffer
+	must_insert(*kerns, i->func_name, vk_func_info_t{*i, shader_module, pipeline_layout, pipeline, layout, is_buffer
 	      #ifdef DEBUG
 	      , (uint32_t) loc_work_sz
 	      #endif
@@ -612,7 +572,17 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 
 
     void buffer_copy(VkBuffer dst, VkBuffer src, VkDeviceSize size) {
-
+      finish_and_sync();
+      // XXX maybe use current_command_buffer here as well
+      VkCommandBufferAllocateInfo command_buffer_allocate_info = {
+	VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+	0,
+	command_pool,
+	VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+	1
+      };
+      VkCommandBuffer command_buffer;
+      BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(device, &command_buffer_allocate_info, &command_buffer));
       VkCommandBufferBeginInfo command_buffer_begin_info = {
 	VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 	0,
@@ -706,8 +676,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       for (auto& f : *kerns) {
 	vk_func_info_t func = must_find( *kerns, f.first );
 	vkDestroyShaderModule(device, func.kern, 0);
-	vkDestroyDescriptorPool(device, func.var_info.pool, 0);
-	vkDestroyDescriptorSetLayout(device, func.var_info.layout, 0);
+	vkDestroyDescriptorSetLayout(device, func.layout, 0);
 	vkDestroyPipeline(device, func.pipeline, 0);
 	vkDestroyPipelineLayout(device, func.pipeline_layout, 0);
       }
@@ -729,7 +698,6 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 
     vect_vk_query_pool_t call_evs;
     uint32_t alloc_call_id( void ) {
-      // XXX actually use this, when running kernels
       VkQueryPoolCreateInfo query_info = {
 	VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
 	0,
@@ -770,16 +738,118 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
     virtual float get_var_ready_delta( string const & vn1, string const & vn2 ) { return 0; }
 
     void release_func( string const & func_name ) {
-      //std::cout << "releasing: " << func_name << std::endl;
       vk_func_info_t func = must_find( *kerns, func_name );
       vkDestroyShaderModule(device, func.kern, 0);
-      vkDestroyDescriptorPool(device, func.var_info.pool, 0);
-      vkDestroyDescriptorSetLayout(device, func.var_info.layout, 0);
+      vkDestroyDescriptorSetLayout(device, func.layout, 0);
       vkDestroyPipeline(device, func.pipeline, 0);
       vkDestroyPipelineLayout(device, func.pipeline_layout, 0);
       must_erase( *kerns, func_name );
     }
 
+    void store_cb_data(vk_buffer_info_t* pod, VkDescriptorPool pool) {
+	current_command_buffer->pools.push_back(pool);
+	if (pod)
+	  current_command_buffer->pods.push_back(*pod);
+	return;
+    }
+
+    void free_cb_data(command_buffer_t& cb) { 
+      for (auto& pool : cb.pools)
+	vkDestroyDescriptorPool(device, pool, 0);
+      cb.pools.clear();
+	
+      for (auto& pod : cb.pods) {
+	vkFreeMemory(device, pod.mem, 0);
+	vkDestroyBuffer(device, pod.buf, 0);
+      }
+      cb.pods.clear();
+      return;
+    }
+    void set_current_command_buffer() {
+      if (current_command_buffer) 
+	return;
+      
+      for (auto& cb: command_buffers) {
+	if (vkGetFenceStatus(device, cb.fence) != VK_SUCCESS)
+	  continue;
+	vkResetFences(device, 1, &cb.fence);
+	free_cb_data(cb);
+	VkCommandBufferBeginInfo command_buffer_begin_info = {
+	  VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+	  0,
+	  VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+	  0
+	};
+
+	BAIL_ON_BAD_RESULT(vkBeginCommandBuffer(cb.vk_cb, &command_buffer_begin_info));
+	
+	submitted_kernels = 0;
+	current_command_buffer = &cb;
+	return;
+      }
+
+      command_buffer_t new_cb;
+      
+      VkCommandBufferAllocateInfo command_buffer_allocate_info = {
+	VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+	0,
+	command_pool,
+	VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+	1
+      };
+      VkCommandBuffer new_vk_cb;
+      BAIL_ON_BAD_RESULT(vkAllocateCommandBuffers(device, &command_buffer_allocate_info, &new_vk_cb));
+      
+      VkCommandBufferBeginInfo command_buffer_begin_info = {
+	VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+	0,
+	VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+	0
+      };
+
+      BAIL_ON_BAD_RESULT(vkBeginCommandBuffer(new_vk_cb, &command_buffer_begin_info));
+      new_cb.vk_cb = new_vk_cb;
+
+      VkFenceCreateInfo fence_create_info = {
+	VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+	0,
+	0
+      };
+      VkFence new_fence;
+      vkCreateFence(device, &fence_create_info, 0, &new_fence);
+      new_cb.fence = new_fence;
+
+      command_buffers.push_back(new_cb);
+      current_command_buffer = &command_buffers.back();
+      submitted_kernels = 0;
+    }
+
+    void submit_command(bool force) {
+      if (!force && submitted_kernels < KERNELS_PER_BUFFER)
+	return;
+      if (!current_command_buffer)
+	return;
+      
+      BAIL_ON_BAD_RESULT(vkEndCommandBuffer(current_command_buffer->vk_cb));
+
+      VkSubmitInfo submit_info = {
+	VK_STRUCTURE_TYPE_SUBMIT_INFO,
+	0,
+	0,
+	0,
+	0,
+	1,
+	&current_command_buffer->vk_cb,
+	0,
+	0
+      };
+      //timer_t t("vk kernel");
+      BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submit_info, current_command_buffer->fence));
+      //BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
+      //t.stop();
+      current_command_buffer = nullptr;
+    }
+    
     uint32_t run( rtc_func_call_t const & rfc ) {
       // XXX remove debug timers
       timer_t t1("vk run");
@@ -817,9 +887,41 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	if (is_buffer != vfi.is_buffer.end())
 	  ++is_buffer;
       }
-
       int POD_count = POD_sz ? 1 : 0;
-      vector<VkWriteDescriptorSet> descriptor_sets(var_ix+POD_count);
+
+      VkDescriptorPoolSize descriptor_pool_size = {
+	VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+	/*
+	 * We don't know at compile time, whether we need a descriptor for a POD buffer,
+	 * so layout always includes one. May be fixable.
+	 */
+	(uint32_t) var_ix+1
+      };
+
+      VkDescriptorPoolCreateInfo descriptor_pool_create_info = {
+	VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+	0,
+	0,
+	1,
+	1,
+	&descriptor_pool_size
+      };
+
+      VkDescriptorPool descriptor_pool;
+      BAIL_ON_BAD_RESULT(vkCreateDescriptorPool(device, &descriptor_pool_create_info, 0, &descriptor_pool));
+
+
+      VkDescriptorSetAllocateInfo descriptor_set_allocate_info = {
+	VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+	0,
+	descriptor_pool,
+	1,
+	&vfi.layout
+      };
+
+      VkDescriptorSet descriptor_set;
+      BAIL_ON_BAD_RESULT(vkAllocateDescriptorSets(device, &descriptor_set_allocate_info, &descriptor_set));
+      vector<VkWriteDescriptorSet> desc_sets_update(var_ix+POD_count);
       vector<VkDescriptorBufferInfo> bi(var_ix+POD_count); // XXX no need for vector
       var_ix = 0;
       //std::cout << rfc.rtc_func_name << " " << UBO_sz << " " << UBO_count <<  std::endl;
@@ -831,10 +933,10 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	  0,
 	  VK_WHOLE_SIZE};
 
-	descriptor_sets[var_ix] = {
+	desc_sets_update[var_ix] = {
 	  VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 	  0,
-	  vfi.var_info.set,
+	  descriptor_set,
 	  var_ix,
 	  0,
 	  1,
@@ -871,10 +973,10 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	  VK_WHOLE_SIZE
 	};
 
-	descriptor_sets[var_ix] = {
+	desc_sets_update[var_ix] = {
 	  VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 	  0,
-	  vfi.var_info.set,
+	  descriptor_set,
 	  var_ix,
 	  0,
 	  1,
@@ -883,7 +985,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	  &bi[var_ix],
 	  0};
       }
-      vkUpdateDescriptorSets(device, var_ix+POD_count, descriptor_sets.data(), 0, 0);
+      vkUpdateDescriptorSets(device, var_ix+POD_count, desc_sets_update.data(), 0, 0);
 
       uint32_t const call_id = alloc_call_id();
 
@@ -892,60 +994,38 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       #ifdef DEBUG
       assert(loc_work_sz == vfi.tpb); // XXX: does this hold?
       #endif
-      
-      VkCommandBufferBeginInfo command_buffer_begin_info = {
-	VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-	0,
-	VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-	0
-      };
 
-      BAIL_ON_BAD_RESULT(vkBeginCommandBuffer(command_buffer, &command_buffer_begin_info));
-
-      vkCmdResetQueryPool(command_buffer, call_evs[call_id], 0, 1);
+      set_current_command_buffer();
+      store_cb_data(POD_count ? &pod : nullptr, descriptor_pool);
       
-      vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+      vkCmdResetQueryPool(current_command_buffer->vk_cb, call_evs[call_id], 0, 1);
+      
+      vkCmdWriteTimestamp(current_command_buffer->vk_cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
 			  call_evs[call_id], 0);
 
 
-      vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, vfi.pipeline);
+      vkCmdBindPipeline(current_command_buffer->vk_cb, VK_PIPELINE_BIND_POINT_COMPUTE, vfi.pipeline);
 
 
-      vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
-			      vfi.pipeline_layout, 0, 1, &vfi.var_info.set, 0, 0);
-      vkCmdDispatch(command_buffer, glob_work_sz/loc_work_sz, 1, 1);
-
-      vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+      vkCmdBindDescriptorSets(current_command_buffer->vk_cb, VK_PIPELINE_BIND_POINT_COMPUTE,
+			      vfi.pipeline_layout, 0, 1, &descriptor_set, 0, 0);
+      vkCmdDispatch(current_command_buffer->vk_cb, glob_work_sz/loc_work_sz, 1, 1);
+      submitted_kernels++;
+      
+      vkCmdWriteTimestamp(current_command_buffer->vk_cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
 			  call_evs[call_id], 1);
 
-      BAIL_ON_BAD_RESULT(vkEndCommandBuffer(command_buffer));
+      submit_command(false);
 
-      VkSubmitInfo submit_info = {
-	VK_STRUCTURE_TYPE_SUBMIT_INFO,
-	0,
-	0,
-	0,
-	0,
-	1,
-	&command_buffer,
-	0,
-	0
-      };
-
-      BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submit_info, 0));
-      BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
-      
-      if (POD_count) {
-	vkFreeMemory(device, pod.mem, 0);
-	vkDestroyBuffer(device, pod.buf, 0);
-      }
       return call_id;
     }
 
-    void finish_and_sync( void ) { BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue)); }
+    void finish_and_sync( void ) {
+      submit_command(true);
+      BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
+    }
 
     ~vk_compute_t() {
-      //assert(init_done.v);
       if (staging_sz != 0) {
 	vkFreeMemory(device, staging_buffer.mem, 0);
 	vkDestroyBuffer(device, staging_buffer.buf, 0);
@@ -953,6 +1033,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 
       if (!init_done.v)
 	return;
+      
       vkFreeMemory(device, null_buffer.mem, 0);
       vkDestroyBuffer(device, null_buffer.buf, 0);
 
@@ -964,7 +1045,10 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	vis->clear();
 
 	release_all_funcs();
-	
+	for (auto& cb : command_buffers) {
+	  free_cb_data(cb);
+	  vkDestroyFence(device, cb.fence, 0);
+	}
 	vkDestroyCommandPool(device, command_pool, 0);
 
 #ifdef DEBUG
