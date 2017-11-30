@@ -556,14 +556,23 @@ namespace boda
       rtc->finish_and_sync();
     }
     float const compute_dur = fwd_calls.empty() ? 0.0f : rtc->get_dur( fwd_calls.front().call_id, fwd_calls.back().call_id );
+    float sum = 0.0;
+    for( vect_rtc_fwd_func_call_t::iterator i = fwd_calls.begin(); i != fwd_calls.end(); ++i ) {
+      if( i->call_tag.empty() ) { continue; }
+      sum +=  rtc->get_dur( i->call_id, i->call_id );
+    }
+    printf ("Sum of kernel runtimes: %f , Runtime from first to last kernel: %f \n", sum, compute_dur);
+    
     if( enable_prof ) { rtc->profile_stop(); }
     if( !per_call_fn.empty() ) {
+      float sum = 0.0;
       p_ostream out = ofs_open( per_call_fn );
       (*out) << strprintf("net.args.runtime=%s\n", str(compute_dur/1000.0).c_str() );
       for( vect_rtc_fwd_func_call_t::iterator i = fwd_calls.begin(); i != fwd_calls.end(); ++i ) {
 	rcg_func_call_t & rfc = *i->rfc;
 	if( i->call_tag.empty() ) { continue; }
 	float const rfc_dur = rtc->get_dur( i->call_id, i->call_id );
+	sum += rfc_dur;
 	(*out) << strprintf( "per_layer_time['%s']=per_layer_time.get('%s',0.0) + %s # %s \n", 
 			     str(i->call_tag).c_str(), str(i->call_tag).c_str(), str(rfc_dur/1000.0).c_str(), 
                              rfc.rcg->gen_fn.c_str() );
