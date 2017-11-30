@@ -44,8 +44,26 @@ namespace boda
     try { return boost::lexical_cast< uint32_t >( s ); }
     catch( boost::bad_lexical_cast & e ) { rt_err( strprintf("can't convert '%s' to uint32_t.", s ) ); }
   }
+  uint64_t lc_str_u64( char const * const s )
+  { 
+    try { return boost::lexical_cast< uint64_t >( s ); }
+    catch( boost::bad_lexical_cast & e ) { rt_err( strprintf("can't convert '%s' to uint64_t.", s ) ); }
+  }
+  int32_t lc_str_i32( char const * const s )
+  { 
+    try { return boost::lexical_cast< int32_t >( s ); }
+    catch( boost::bad_lexical_cast & e ) { rt_err( strprintf("can't convert '%s' to int32_t.", s ) ); }
+  }
+  int64_t lc_str_i64( char const * const s )
+  { 
+    try { return boost::lexical_cast< int64_t >( s ); }
+    catch( boost::bad_lexical_cast & e ) { rt_err( strprintf("can't convert '%s' to int64_t.", s ) ); }
+  }
   double lc_str_d( string const & s ) { return lc_str_d( s.c_str() ); } 
-  uint32_t lc_str_u32( string const & s ) { return lc_str_u32( s.c_str() ); } 
+  uint32_t lc_str_u32( string const & s ) { return lc_str_u32( s.c_str() ); }
+  uint64_t lc_str_u64( string const & s ) { return lc_str_u64( s.c_str() ); }
+  int32_t lc_str_i32( string const & s ) { return lc_str_i32( s.c_str() ); } 
+  int64_t lc_str_i64( string const & s ) { return lc_str_i64( s.c_str() ); }
 
   string join( vect_string const & vs, string const & sep ) {
     string ret;
@@ -102,6 +120,7 @@ namespace boda
   }
 
   string strip_ws( std::string const & s ) { return boost::algorithm::trim_copy( s ); }
+  void strip_ws_inplace( std::string & s ) { return boost::algorithm::trim( s ); }
 
 
   string strprintf( char const * const format, ... )
@@ -159,6 +178,14 @@ namespace boda
     return ret;
   }
 
+  bool maybe_replace_str_with_str( string & s, string const & find_s, string const & rep_s ) {
+    string ret;
+    size_t const fp = s.find( find_s, 0 );
+    if( fp == string::npos ) { return 0; }
+    s = s.substr( 0, fp ) + rep_s + s.substr( fp+find_s.size(), string::npos );
+    return 1;
+  }
+  
   string strip_ending_chars( string const & s, string const & chars_to_strip ) { 
     string ret;
     size_t epos = s.size();

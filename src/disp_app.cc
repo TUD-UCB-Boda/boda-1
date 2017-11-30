@@ -51,7 +51,10 @@ namespace boda
     double fps; //NESI(default=5,help="frames to (try to ) send to display per second (note: independant of display rate)")
     uint32_t rand_winds; //NESI(default=0,help="if set, display 1/2 image size random windows instead of full image")
     uint32_t auto_adv; //NESI(default=1,help="if set, slideshow mode")
-    uint32_t do_score; //NESI(default=1,help="if set, run scoring. if == 2, quit after scoring.")
+    uint32_t start_img_ix; //NESI(default=0,help="start at image ix")
+    uint32_t do_score; //NESI(default=0,help="if set, run scoring. 1: use rp_boxes; 2: use res_fn.")
+    double det_show_thresh; //NESI(default=0.0,help="when do_score is set, visualize/show only dets with score >= this value")
+    uint32_t quit_after_score; //NESI(default=0,help="if set, quit after scoring.")
     uint32_t show_filt; //NESI(default=0,help="0 == show_all, 1 == show matched, 2 == show unmatched")
     disp_win_t disp_win;
     p_vect_p_img_t disp_imgs;
@@ -66,13 +69,15 @@ namespace boda
     filename_t prc_png_fn; //NESI(default="%(boda_output_dir)/mAP_",help="output: png prc curve base filename")
     p_vect_p_per_class_scored_dets_t scored_dets;
 
-    vect_u32_box_t rp_boxes;
+    filename_t res_fn; //NESI(default="%(bench_dir)/results/%%s_test.txt",help="format for filenames of pascal-VOC format DPM detection results files. %%s will be replaced with the class name")
+
+    vect_i32_box_t rp_boxes;
     filename_t rp_boxes_fn; //NESI(default="rps.txt",help="input: region proposal boxes")
 
 
     void score_img( p_img_info_t const & img_info ) {
       p_vect_base_scored_det_t img_sds( new vect_base_scored_det_t );
-      for( vect_u32_box_t::const_iterator i = rp_boxes.begin(); i != rp_boxes.end(); ++i ) {
+      for( vect_i32_box_t::const_iterator i = rp_boxes.begin(); i != rp_boxes.end(); ++i ) {
 	img_sds->push_back( base_scored_det_t{*i,1} );
       }
 
@@ -107,6 +112,7 @@ namespace boda
 	if( !rand_winds ) { disp_imgs->at(0)->fill_with_pel( grey_to_pel( 128 ) ); }
 	img_copy_to_clip( img.get(), disp_imgs->at(0).get(), dest_pt, src_pt, copy_sz );
 	p_vect_anno_t annos( new vect_anno_t );
+        keep_img |= (show_filt == 0); // always keep img if show_filt==0
 	for( vect_string::const_iterator i = (*classes).begin(); i != (*classes).end(); ++i ) {
 	  string const & cn = *i;
 	  vect_gt_det_t const & gt_dets = img_info->gt_dets[cn];
@@ -116,19 +122,22 @@ namespace boda
 	    p_per_class_scored_dets_t const & sds = scored_dets->at( i - classes->begin() );
 	    gtms = &sds->get_gtms( img_info->ix, gt_dets.size() );
 	    p_vect_base_scored_det_t const & img_sds = sds->get_per_img_sds( img_info->ix, 0 );
-	    assert( img_sds );
-	    for( vect_base_scored_det_t::const_iterator i = img_sds->begin(); i != img_sds->end(); ++i ) {
-	      //annos->push_back( anno_t{u32_to_i32(*i), rgba_to_pel(40,40,170), 0, cn + "=" + str(i->score), rgba_to_pel(220,220,255) } );
-	    }	
+	    if( img_sds ) {
+              for( vect_base_scored_det_t::const_iterator i = img_sds->begin(); i != img_sds->end(); ++i ) {
+                //printf( "cn=%s i->score=%s\n", str(cn).c_str(), str(i->score).c_str() );
+                if( i->score > det_show_thresh ) {
+                  annos->push_back( anno_t{*i, rgba_to_pel(40,40,170), 0, cn + "=" + str(i->score), rgba_to_pel(220,220,255) } );
+                }
+              }
+            }
 	  }
 
 	  // annotate GTs
-	  keep_img |= (show_filt == 0); // always keep if show_filt==0
 	  keep_img |= (!gt_dets.empty()); // keep if any gts
 	  for( uint32_t i = 0; i != gt_dets.size(); ++i ) {
 	    bool const is_matched = (!gtms) || gtms->at(i).matched;
 	    uint32_t gt_color = is_matched ? rgba_to_pel(40,170,40) : rgba_to_pel(170,40,40);
-	    annos->push_back( anno_t{u32_to_i32(gt_dets[i]), gt_color, 0, cn, rgba_to_pel(220,220,255) } );
+	    annos->push_back( anno_t{gt_dets[i], gt_color, 0, cn, rgba_to_pel(220,220,255) } );
 	    if( show_filt != 0 ) {
 	      if( !gtms ) { keep_img |= 1; } // always keep if no scoring done
 	      else if( is_matched ? (show_filt==1) : (show_filt==2) ) { keep_img |= 1; }
@@ -157,6 +166,11 @@ namespace boda
       if( 0 ) { }
       else if( lbe.is_key && (lbe.keycode == 'd') ) { mod_adj( cur_img_ix, img_db->img_infos.size(),  1 ); auto_adv=0; }
       else if( lbe.is_key && (lbe.keycode == 'a') ) { mod_adj( cur_img_ix, img_db->img_infos.size(), -1 ); auto_adv=0; }
+      else if( lbe.is_key && (lbe.keycode == 'i') ) {
+        auto_adv=0;
+        p_img_info_t img_info = img_db->img_infos[cur_img_ix];
+        printf( "cur_img_ix=%s img_info->full_fn=%s img_info->id=%s\n", str(cur_img_ix).c_str(), str(img_info->full_fn).c_str(), str(img_info->id).c_str() );
+      }
       else if( lbe.is_key && (lbe.keycode == 'p') ) { auto_adv ^= 1; }
       else if( lbe.is_key ) { // unknown command handlers
 	unknown_command = 1; 
@@ -175,23 +189,31 @@ namespace boda
 
       if( do_score ) {
 	// setup scored_dets
-	read_text_file( rp_boxes, rp_boxes_fn.exp );
 	scored_dets.reset( new vect_p_per_class_scored_dets_t );
-	for( vect_string::const_iterator i = (*classes).begin(); i != (*classes).end(); ++i ) {
-	  scored_dets->push_back( p_per_class_scored_dets_t( new per_class_scored_dets_t( *i ) ) );
-	}
-	for (uint32_t ix = 0; ix < img_db->img_infos.size(); ++ix) {
-	  p_img_info_t img_info = img_db->img_infos[ix];
-	  score_img( img_info );
-	}	
-	bool const quit_after_score = (do_score == 2);
-	img_db->score_results( scored_dets, prc_txt_fn.exp, prc_png_fn.exp, quit_after_score );
+        if( do_score == 1 ) { // use one set of rp_boxes as dets for all classes
+          read_text_file( rp_boxes, rp_boxes_fn.exp );
+          for( vect_string::const_iterator i = (*classes).begin(); i != (*classes).end(); ++i ) {
+            scored_dets->push_back( p_per_class_scored_dets_t( new per_class_scored_dets_t( *i ) ) );
+          }
+          for (uint32_t ix = 0; ix < img_db->img_infos.size(); ++ix) {
+            p_img_info_t img_info = img_db->img_infos[ix];
+            score_img( img_info );
+          }
+        } else if( do_score == 2 ) { // use res_fn to get per-class results files
+          for( vect_string::const_iterator i = (*classes).begin(); i != (*classes).end(); ++i ) {
+            scored_dets->push_back( read_results_file( img_db, strprintf( res_fn.exp.c_str(), (*i).c_str() ), *i ) );
+          }
+        } else {
+          rt_err( "unknown do_score value; should be 1 or 2 (or 0 to disable)" );
+        }
+        
+	img_db->score_results( scored_dets, prc_txt_fn.exp, prc_png_fn.exp, "", quit_after_score ); // NOTE: no summary output
 	if( quit_after_score ) { return; }
       }
 
       disp_imgs = disp_win.disp_setup( {img_db->get_max_img_sz()} );
       
-      cur_img_ix = 0;
+      cur_img_ix = start_img_ix;
       io_service_t & io = get_io( &disp_win );
       frame_timer.reset( new deadline_timer_t( io ) );
       frame_dur = microseconds( 1000 * 1000 / fps );

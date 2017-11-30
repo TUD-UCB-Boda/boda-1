@@ -45,6 +45,14 @@ namespace boda {
     p_SDL_Texture tex;
 
     p_SDL_Rect displayrect;
+    uint32_t cam_mode;
+    float pan_orig_cam_x;
+    float pan_orig_cam_y;
+    float pan_orig_cam_rx;
+    float pan_orig_cam_ry;
+    float cam_pos[3];
+    float cam_rot[3];
+    void reset_cam( void );
     int32_t zoom;
     i32_pt_t pan_pin;
     i32_pt_t pan_orig_dr;
@@ -56,12 +64,15 @@ namespace boda {
 
     p_YV12_buf_t YV12_buf;
     p_vect_p_img_t imgs;
+    vect_u32_pt_t imgs_buf_nc;
+    string layout_mode;
     vect_p_vect_anno_t img_annos;
 
     uint64_t frame_cnt;
-
-    p_asio_t asio;
     
+    p_asio_t asio;
+
+    zi_bool font_setup_done;
     p_TTF_Font font;
 
     disp_win_t( void );
@@ -71,6 +82,7 @@ namespace boda {
     void disp_setup( p_img_t const & img ); // one existing image 
     p_vect_p_img_t disp_setup( vect_u32_pt_t const & disp_img_szs ); // create/usr/return a list of images of the given sizes
     void update_dr_for_window_and_zoom( u32_pt_t const & new_win_sz );
+    void update_disp_img( uint32_t const pix, p_img_t const & new_img );
     void update_disp_imgs( void );
     void update_img_annos( uint32_t const & img_ix, p_vect_anno_t const & annos );
     void drain_sdl_events_and_redisplay( void );

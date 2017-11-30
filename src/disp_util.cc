@@ -69,16 +69,36 @@ namespace boda
   void img_to_YV12( YV12_buf_t const & YV12_buf, p_img_t const & img, uint32_t const out_x, uint32_t const out_y ) {
     uint32_t const w = img->sz.d[0]; 
     uint32_t const h = img->sz.d[1];
+    
     uint8_t *out_Y, *out_V, *out_U;
-    for( uint32_t y = 0; y < h; ++y ) {
-      YV12_buf.YVUat( out_Y, out_V, out_U, out_x, out_y+y );
-      uint32_t const * rgb = img->get_row_addr( y );
-      for( uint32_t x = 0; x < w; ++x, ++rgb ) {
-	rgba2y( *rgb, *(out_Y++) );
-	if( !((x&1) || (y&1)) ) { rgba2uv( *rgb, *(out_U++), *(out_V++) ); }
+    if( !img->yuv_pels.empty() ) {
+      uint8_t const * yr;
+      uint8_t const * ur;
+      uint8_t const * vr;
+      for( uint32_t y = 0; y < h; ++y ) {
+        YV12_buf.YVUat( out_Y, out_V, out_U, out_x, out_y+y );
+        img->get_YUV_row_addr( y, yr, ur, vr );
+        std::copy( yr, yr+w, out_Y );
+        if( !(y&1) ) { // for even rows, copy u/v data too
+          std::copy( ur, ur+(w+1)/2, out_U );          
+          std::copy( vr, vr+(w+1)/2, out_V );
+        }
       }
+    } else if( img->pels ) {
+      for( uint32_t y = 0; y < h; ++y ) {
+        YV12_buf.YVUat( out_Y, out_V, out_U, out_x, out_y+y );
+        uint32_t const * rgb = img->get_row_addr( y );
+        for( uint32_t x = 0; x < w; ++x, ++rgb ) {
+          rgba2y( *rgb, *(out_Y++) );
+          if( !((x&1) || (y&1)) ) { rgba2uv( *rgb, *(out_U++), *(out_V++) );
+          }
+        }
+      }
+    } else {
+      rt_err( "can't copy img_t to YV12_buf, no (understood) pels data present in img_t" );
     }
   }
+
 
   struct asio_t {
     asio_t( void ) : frame_timer(io), quit_event(io), lb_event(io) { }
@@ -93,8 +113,14 @@ namespace boda
   // has requested the quit event, in which case we assume they will
   // handle things.
   io_service_t & get_io( disp_win_t * const dw ) { return dw->asio->io; }
-  deadline_timer_t & get_quit_event( disp_win_t * const dw ) { dw->stop_io_on_quit = 0; return dw->asio->quit_event; }
-  lb_event_t & get_lb_event( disp_win_t * const dw ) { return dw->asio->lb_event; }
+  deadline_timer_t & get_quit_event( disp_win_t * const dw ) {
+    dw->stop_io_on_quit = 0;
+    dw->asio->quit_event.expires_from_now( pos_infin ); // init event so it won't happen till we set it
+    return dw->asio->quit_event;
+  }
+  lb_event_t & get_lb_event( disp_win_t * const dw ) {
+    return dw->asio->lb_event;
+  }
 
   void on_frame( disp_win_t * const dw, error_code const & ec ) {
     if( ec ) { return; } // handle?
@@ -111,7 +137,13 @@ namespace boda
     }
   }
 
-  disp_win_t::disp_win_t( void ) : zoom(0), stop_io_on_quit(1), asio( new asio_t ) { }
+  disp_win_t::disp_win_t( void ) : cam_mode(1), zoom(0), stop_io_on_quit(1), asio( new asio_t ) { reset_cam(); }
+
+  void disp_win_t::reset_cam( void ) {
+    for( uint32_t i = 0; i != 3; ++i ) { cam_rot[i] = 0.0f; cam_pos[i] = 0.0f; }
+    cam_rot[1] = 80.0f;
+      
+  }
 
   // FIXME: the size of imgs and the w/h of the img_t's inside imgs
   // may not change after setup, but this is not checked.
@@ -146,15 +178,18 @@ namespace boda
     
     if( SDL_Init( SDL_INIT_VIDEO ) < 0 ) { rt_err( strprintf( "Couldn't initialize SDL: %s\n", SDL_GetError() ) ); }
 
-    window_sz = {640,480};
-    assert( !window );
-    window = make_p_SDL( SDL_CreateWindow( "boda display", 
-							SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-							window_sz.d[0], window_sz.d[1],
-							SDL_WINDOW_RESIZABLE) );
+    if( window_sz == u32_pt_t() ) { window_sz = {640,480}; }
+    if( layout_mode.empty() ) { layout_mode = "horiz"; }
+    if( !window ) {
+      window = make_p_SDL( SDL_CreateWindow( "boda display", 
+                                             SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+                                             window_sz.d[0], window_sz.d[1],
+                                             SDL_WINDOW_RESIZABLE) );
+    }
     if( !window ) { rt_err( strprintf( "Couldn't set create window: %s\n", SDL_GetError() ) ); }
-    assert( !renderer );
-    renderer = make_p_SDL( SDL_CreateRenderer( window.get(), -1, 0) ) ;
+    if( !renderer ) {
+      renderer = make_p_SDL( SDL_CreateRenderer( window.get(), -1, 0) ) ;
+    }
     if (!renderer) { rt_err( strprintf( "Couldn't set create renderer: %s\n", SDL_GetError() ) ); }
 
 #if 0
@@ -166,22 +201,37 @@ namespace boda
     //uint32_t const pixel_format = SDL_PIXELFORMAT_ABGR8888;
     uint32_t const pixel_format = SDL_PIXELFORMAT_YV12;
     YV12_buf.reset( new YV12_buf_t );
+    imgs_buf_nc.clear();
     {
       uint32_t img_w = 0;
       uint32_t img_h = 0;
-      for( vect_p_img_t::const_iterator i = imgs->begin(); i != imgs->end(); ++i ) {
-	img_w += (*i)->sz.d[0];
-	max_eq( img_h, (*i)->sz.d[1] );
-      }
+      if( layout_mode == "horiz" ) {
+        for( vect_p_img_t::const_iterator i = imgs->begin(); i != imgs->end(); ++i ) {
+          max_eq( img_h, (*i)->sz.d[1] );
+        }
+        for( vect_p_img_t::const_iterator i = imgs->begin(); i != imgs->end(); ++i ) {
+          imgs_buf_nc.push_back( u32_pt_t{ img_w, img_h - (*i)->sz.d[1] } );
+          img_w += (*i)->sz.d[0];
+        }
+      } else if( layout_mode == "vert" ) {
+        for( vect_p_img_t::const_iterator i = imgs->begin(); i != imgs->end(); ++i ) {
+          max_eq( img_w, (*i)->sz.d[0] );
+        }
+        for( vect_p_img_t::const_iterator i = imgs->begin(); i != imgs->end(); ++i ) {
+          imgs_buf_nc.push_back( u32_pt_t{ img_w - (*i)->sz.d[0], img_h } );
+          img_h += (*i)->sz.d[1];
+        }
+
+      } else { rt_err( "unknown layout_mode=" + layout_mode ); }
       // make w/h even for simplicity of YUV UV (2x downsampled) planes
       if( img_w & 1 ) { ++img_w; }
       if( img_h & 1 ) { ++img_h; }
       YV12_buf->set_sz_and_alloc( {img_w, img_h} );
     }
 
-    assert( !tex );
+    tex.reset();
     tex = make_p_SDL( SDL_CreateTexture( renderer.get(), pixel_format, SDL_TEXTUREACCESS_STREAMING, 
-						       YV12_buf->w, YV12_buf->h ) );
+                                         YV12_buf->w, YV12_buf->h ) );
 
     if( !tex ) { rt_err( strprintf( "Couldn't set create texture: %s\n", SDL_GetError()) ); }
 
@@ -201,35 +251,46 @@ namespace boda
     asio->frame_dur = microseconds( 1000 * 1000 / fps );
     asio->frame_timer.expires_from_now( time_duration() );
     asio->frame_timer.async_wait( bind( on_frame, this, _1 ) );
-    asio->quit_event.expires_from_now( pos_infin );
-    asio->lb_event.expires_from_now( pos_infin );
+    asio->lb_event.expires_from_now( pos_infin ); // init event so it won't happen till we set it
 
     // font setup
-    if( TTF_Init() < 0 ) { rt_err_sdl( "Couldn't initialize TTF" ); }
+    if( !font_setup_done.v ) {
+      if( TTF_Init() < 0 ) { rt_err_sdl( "Couldn't initialize TTF" ); }
 
-    string const font_fn = py_boda_dir() +"/fonts/DroidSansMono.ttf"; // FIXME: use boost filesystem?
-    uint32_t const ptsize = 18;
-    font.reset( TTF_OpenFont(font_fn.c_str(), ptsize), TTF_CloseFont );
-    if( !font ) { rt_err_sdl( strprintf( "Couldn't load %s pt font from %s", str(ptsize).c_str(), font_fn.c_str() ).c_str() ); }
+      string const font_fn = py_boda_dir() +"/fonts/DroidSansMono.ttf"; // FIXME: use boost filesystem?
+      uint32_t const ptsize = 18;
+      font.reset( TTF_OpenFont(font_fn.c_str(), ptsize), TTF_CloseFont );
+      if( !font ) { rt_err_sdl( strprintf( "Couldn't load %s pt font from %s", str(ptsize).c_str(), font_fn.c_str() ).c_str() ); }
 
-    int const renderstyle = TTF_STYLE_NORMAL;
-    int const hinting = TTF_HINTING_MONO;
-    int const kerning = 0;
+      int const renderstyle = TTF_STYLE_NORMAL;
+      int const hinting = TTF_HINTING_MONO;
+      int const kerning = 0;
 
-    //printf( "TTF_FontFaceIsFixedWidth()=%s\n", str(TTF_FontFaceIsFixedWidth(font.get())).c_str() );
-    TTF_SetFontStyle( font.get(), renderstyle );
-    TTF_SetFontOutline( font.get(), 0 );
-    TTF_SetFontKerning( font.get(), kerning );
-    TTF_SetFontHinting( font.get(), hinting );
+      //printf( "TTF_FontFaceIsFixedWidth()=%s\n", str(TTF_FontFaceIsFixedWidth(font.get())).c_str() );
+      TTF_SetFontStyle( font.get(), renderstyle );
+      TTF_SetFontOutline( font.get(), 0 );
+      TTF_SetFontKerning( font.get(), kerning );
+      TTF_SetFontHinting( font.get(), hinting );
+      font_setup_done.v = 1;
+    }
   }
 
+  // replace a backing image wholesale. note: image size must not change. note2: will not update display; call
+  // update_disp_imgs() below for that. this function is an alternative to shared-ownership of the backing images, and
+  // can also replace usages where shared_ref_to_backing_image->share_pels_from() was called.
+  void disp_win_t::update_disp_img( uint32_t const pix, p_img_t const & new_img ) {
+    assert_st( pix < imgs->size() );
+    assert_st( imgs->at(pix)->sz == new_img->sz );
+    imgs->at(pix) = new_img;
+  }
+    
   // call when changes to imgs should be reflected/copied onto the display texture
   void disp_win_t::update_disp_imgs( void ) {
     if( paused ) { return; }
-    uint32_t out_x = 0;
-    for( uint32_t i = 0; i != imgs->size(); ++i ) { 
-      img_to_YV12( *YV12_buf, imgs->at(i), out_x, YV12_buf->h - imgs->at(i)->sz.d[1] );
-      out_x += imgs->at(i)->sz.d[0];
+    assert_st( imgs->size() == imgs_buf_nc.size() );
+    for( uint32_t i = 0; i != imgs->size(); ++i ) {
+      u32_pt_t const & img_nc = imgs_buf_nc[i];
+      img_to_YV12( *YV12_buf, imgs->at(i), img_nc.d[0], img_nc.d[1] );
     }
     SDL_UpdateTexture( tex.get(), NULL, YV12_buf->d.get(), YV12_buf->w );
   }
@@ -248,11 +309,12 @@ namespace boda
     i32_pt_t const tex_sz{ int32_t(YV12_buf->w), int32_t(YV12_buf->h) }; // the texture is always it is always drawn resized to the window size (regardless of offset)
     uint32_t out_x = 0;
     asio->lb_event.img_ix = uint32_t_const_max; // default: not inside any image
+    assert_st( imgs->size() == imgs_buf_nc.size() );
     for( uint32_t i = 0; i != imgs->size(); ++i ) { 
       p_img_t const & img = imgs->at(i);
       // calculate what region in the display window this image occupies
       // note: result may be clipped offscreen if it is outside of the visible area of {{0,0},disp_sz}
-      i32_pt_t const img_nc = { int32_t(out_x), int32_t(YV12_buf->h) - int32_t(img->sz.d[1]) };
+      i32_pt_t const img_nc = u32_to_i32( imgs_buf_nc[i] ); // { int32_t(out_x), int32_t(YV12_buf->h) - int32_t(img->sz.d[1]) };
       i32_pt_t const disp_img_nc = (img_nc*disp_sz/tex_sz) + disp_off;
       i32_pt_t const img_sz = u32_to_i32( img->sz );
       i32_pt_t const disp_img_sz = img_sz*disp_sz/tex_sz;
@@ -268,6 +330,9 @@ namespace boda
 	asio->lb_event.xy = img_xy;
       }
     }
+    // FIXME/HACK: we can't seem to prevent this 'event' from firing for no-obvious-reason at startup. but, since we
+    // init valid to 0 in the ctor, we can ignore such firings prior to getting to this line the first time.
+    asio->lb_event.valid = 1; 
     asio->lb_event.cancel();
   }
 
@@ -296,32 +361,68 @@ namespace boda
 	}
 	break;
       case SDL_MOUSEBUTTONDOWN:
-	if( event.button.button == SDL_BUTTON_RIGHT ) {
+	if( event.button.button == SDL_BUTTON_RIGHT ) { asio->lb_event.set_is_lb(); on_lb( event.button.x, event.button.y ); }
+        else {
 	  pan_pin = i32_pt_t{event.button.x,event.button.y};
 	  pan_orig_dr = i32_pt_t{displayrect->x,displayrect->y};
-	} else if( event.button.button == SDL_BUTTON_LEFT ) { asio->lb_event.set_is_lb(); on_lb( event.button.x, event.button.y ); }
+          pan_orig_cam_x = cam_pos[0];
+          pan_orig_cam_y = cam_pos[2];
+          pan_orig_cam_rx = cam_rot[0];
+          pan_orig_cam_ry = cam_rot[1];
+        }
 	break;
       case SDL_MOUSEMOTION:
-	if (event.motion.state&SDL_BUTTON(3)) {
-	  i32_pt_t const pan_to = pan_orig_dr + (i32_pt_t{event.motion.x,event.motion.y} - pan_pin);
-	  displayrect->x = pan_to.d[0];
-	  displayrect->y = pan_to.d[1];
-	}
+        if( cam_mode == 0 ) { // 2D-adj
+          if (event.motion.state&SDL_BUTTON(1)) {
+            i32_pt_t const pan_to = pan_orig_dr + (i32_pt_t{event.motion.x,event.motion.y} - pan_pin);
+            displayrect->x = pan_to.d[0];
+            displayrect->y = pan_to.d[1];
+          }
+        } else { // 3D-adj
+          if (event.motion.state&SDL_BUTTON(2)) {
+            i32_pt_t const pan_to = i32_pt_t{event.motion.x,event.motion.y} - pan_pin;
+            cam_pos[0] = pan_orig_cam_x - pan_to.d[0];
+            cam_pos[2] = pan_orig_cam_y - pan_to.d[1];
+          }
+          if (event.motion.state&SDL_BUTTON(1)) {
+            i32_pt_t const pan_to = i32_pt_t{event.motion.x,event.motion.y} - pan_pin;
+            cam_rot[0] = pan_orig_cam_rx - pan_to.d[0];
+            clamp_eq( cam_rot[0], -180.0f, 180.0f );
+            cam_rot[1] = pan_orig_cam_ry + pan_to.d[1];
+            clamp_eq( cam_rot[1], 0.0f, 90.0f );
+          }
+        }
 	break;
       case SDL_MOUSEWHEEL:
-	zoom += event.wheel.y;
-	min_eq( zoom,  10 );
-	max_eq( zoom, -10 );
-	update_dr_for_window_and_zoom( window_sz );
+        if( cam_mode == 0 ) { // 2D-adj
+          zoom += event.wheel.y;
+          min_eq( zoom,  10 );
+          max_eq( zoom, -10 );
+          update_dr_for_window_and_zoom( window_sz );
+        } else {
+          cam_rot[2] += - event.wheel.y;
+        }
 	break;
       case SDL_KEYDOWN:
 	if( 1 ) { // generate/forward keydown event to disp_util parent/user/client
 	  int mx,my; SDL_GetMouseState( &mx, &my );
 	  asio->lb_event.set_is_key( event.key.keysym.sym ); on_lb( mx, my );
 	}
+	if( event.key.keysym.sym == SDLK_z ) {
+          cam_mode ^= 1;
+          printf( "cam_mode=%s\n", str(cam_mode).c_str() );
+	  break;
+	}
 	if( event.key.keysym.sym == SDLK_s ) {
 	  for( uint32_t i = 0; i != imgs->size(); ++i ) {
 	    imgs->at(i)->save_fn_png( strprintf( "ss_%s.png", str(i).c_str() ) );
+	  }
+	  paused = 1;
+	  break;
+	}
+	if( event.key.keysym.sym == SDLK_j ) {
+	  for( uint32_t i = 0; i != imgs->size(); ++i ) {
+	    imgs->at(i)->save_fn_jpeg( strprintf( "ss_%s.jpg", str(i).c_str() ) );
 	  }
 	  paused = 1;
 	  break;

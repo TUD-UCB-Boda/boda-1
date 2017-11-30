@@ -18,8 +18,15 @@ namespace boda
 
   double lc_str_d( char const * const s );
   uint32_t lc_str_u32( char const * const s );
+  uint64_t lc_str_u64( char const * const s );
+  int32_t lc_str_i32( char const * const s );
+  int64_t lc_str_i64( char const * const s );
+  
   double lc_str_d( std::string const & s );
   uint32_t lc_str_u32( std::string const & s );
+  uint64_t lc_str_u64( std::string const & s );
+  int32_t lc_str_i32( std::string const & s );
+  int64_t lc_str_i64( std::string const & s );
 
   typedef std::vector< std::string > vect_string;
 
@@ -49,6 +56,7 @@ namespace boda
   string get_part_before( string const & s, string const & to_find );
   string get_part_after( string const & s, string const & to_find );
   string replace_chars_with_char( string const & s, string const & chars_to_find, char const rep_with );
+  bool maybe_replace_str_with_str( string & s, string const & find_s, string const & rep_s );
   string strip_ending_chars( string const & s, string const & chars_to_strip );
 
   std::string join( vect_string const & vs, std::string const & sep );
@@ -61,6 +69,7 @@ namespace boda
   vect_string split_space_tab_colon( std::string const & s );
 
   string strip_ws( std::string const & s );
+  void strip_ws_inplace( std::string & s );
 
   inline void strip_prefixes( std::string & s, std::string const & prefix ) {
     while( startswith(s,prefix) ) { s = std::string( s, prefix.size() ); }
@@ -97,6 +106,12 @@ namespace boda
     return s.str();
   }
 
+  // convert T i to string, but force uint8_t to wider/numeric type first
+  template< typename T > inline std::string strN(T const & i) { return str(i); }
+  template<> inline std::string strN( uint8_t const & i ) { return str(uint16_t(i)); }
+  template<> inline std::string strN( int8_t const & i ) { return str(int16_t(i)); }
+
+  
   struct string_scoped_prefixer_t {
     std::string & s;
     uint32_t const orig_sz; 

@@ -31,12 +31,45 @@ namespace boda
   typedef vector< string > vect_string;
   typedef map< string, uint32_t > str_uint32_t_map_t;
 
+  void rng_check( string const & vs, double const & v ) {
+    if( (v < 0.0) || (v > 1.0) ) {
+      rt_err( strprintf( "value '%s'=%s not in range [0.0,1.0]\n", str(vs).c_str(), str(v).c_str() ) );
+    }
+  }
+  
+  void gt_det_t::darknet_to_img_space_conv( u32_pt_t const & img_sz ) {
+    rng_check("x",x); rng_check("y",y); rng_check("w",w); rng_check("h",h); // all input vals should be normalized
+    double const x1 = x - w/2;
+    double const x2 = x + w/2;
+    double const y1 = y - h/2;
+    double const y2 = y + h/2; 
+    rng_check("x1",x1); rng_check("y1",y1); rng_check("x2",x2); rng_check("y2",y2); // all box edges should be normalized too
+    p[0].d[0] = lround( x1*img_sz.d[0] );
+    p[0].d[1] = lround( y1*img_sz.d[1] );
+    p[1].d[0] = lround( x2*img_sz.d[0] );
+    p[1].d[1] = lround( y2*img_sz.d[1] );
+    assert_st( is_normalized() ); // FIXME: should be strictly normalized?
+  }
+
+  // with the image data (in particular the size), do any setup that we deffered that needs such info.
+  void img_info_t::img_loaded_hook( void ) {
+    assert_st(img);
+    // iterate over GT labels, and set the image-space box for any darknet-style ones.
+    for( name_vect_gt_det_map_t::iterator i = gt_dets.begin(); i != gt_dets.end(); ++i ) {
+      for( vect_gt_det_t::iterator j = i->second.begin(); j != i->second.end(); ++j ) {
+        if( j->darknet_style ) { j->darknet_to_img_space_conv( img->sz );  }
+      } 
+    }
+  }
+
   void img_info_load_img( p_img_info_t img_info, string const & img_fn ) {
     img_info->full_fn = img_fn;
     img_info->img.reset( new img_t );
     img_info->img->load_fn( img_info->full_fn.c_str() );
+    img_info->img_loaded_hook();
   }
 
+  
   u32_pt_t img_db_t::get_max_img_sz( void ) const {
     u32_pt_t ret;
     for( vect_p_img_info_t::const_iterator i = img_infos.begin(); i != img_infos.end(); ++i ) {
@@ -141,6 +174,24 @@ namespace boda
     return img_info->second->ix;
   }
 
+  int32_t lc_str_double_and_round_to_i32( string const & s ) {
+    double const v = lc_str_d( s );
+    double rv = ceil( v - 0.5 ); // always round .5 up
+    // yolo seems to output negative/invalid coords sometimes. here, we clamp them to 1.
+    // if( rv < 1.0 ) { rv = 1.0; }
+    // rv += 4000; if( rv < 1.0 ) { rv = 1.0; }
+    // assert_st( rv >= 1.0 ); allow negative/0 returns ...
+    if( (rv < -10000) || (rv > 10000) ) {
+      printf( "WARNING: extreme image-space value of rv=%s; clamped to [-10000,10000]\n", str(rv).c_str() );
+      min_eq( rv, 10000.0 ); max_eq( rv, -10000.0 );
+    }
+    int32_t ret = (int32_t)rv;
+    // check that rv is representable as a int32_t
+    if( double(ret) != rv ) { printf( "ret=%s rv=%s\n", str(ret).c_str(), str(rv).c_str() ); }
+    assert_st( double(ret) == rv ); // check that rv is representable as a int32_t
+    return ret;
+  }
+  
   p_per_class_scored_dets_t read_results_file( p_img_db_t img_db, string const & fn, string const & class_name )
   {
     timer_t t("read_results_file");
@@ -157,10 +208,10 @@ namespace boda
       string const img_id = parts[0];
       scored_det.img_ix = img_db->get_ix_for_img_id( img_id );
       scored_det.score = lc_str_d( parts[1] );
-      scored_det.p[0].d[0] = lc_str_u32( parts[2] );
-      scored_det.p[0].d[1] = lc_str_u32( parts[3] );
-      scored_det.p[1].d[0] = lc_str_u32( parts[4] );
-      scored_det.p[1].d[1] = lc_str_u32( parts[5] );
+      scored_det.p[0].d[0] = lc_str_double_and_round_to_i32( parts[2] );
+      scored_det.p[0].d[1] = lc_str_double_and_round_to_i32( parts[3] );
+      scored_det.p[1].d[0] = lc_str_double_and_round_to_i32( parts[4] );
+      scored_det.p[1].d[1] = lc_str_double_and_round_to_i32( parts[5] );
       scored_det.from_pascal_coord_adjust();
       assert_st( scored_det.is_strictly_normalized() );
       scored_dets->add_det( scored_det );
@@ -241,70 +292,125 @@ namespace boda
       }
     }
   }
+
+  void load_pil_t::flickr_logos_load( void ) {
+    p_vect_string fl_list_lines = readlines_fn( fl_list );
+    set_string classes_set;
+    classes.reset( new vect_string );
+    for( vect_string::iterator i = fl_list_lines->begin(); i != fl_list_lines->end(); ++i ) {
+      boost::algorithm::trim( *i ); // not ideal, but removes trailing newlines at least (and CRs if present)
+      vect_string parts = split(*i,',');
+      if( parts.size() != 2 ) { rt_err("failed to parse line in FlickrLogos-style image list. expected exactly 1 ',', had:" + *i ); }
+      string const & cn = parts[0];
+      string const & fn = parts[1];
+      bool did_ins = classes_set.insert( cn ).second;
+      if( did_ins ) { classes->push_back( cn ); }
+      lexp_name_val_map_t fmt{ p_lexp_t() };
+      fmt.insert_leaf( "cn", cn.c_str(), 0 ); 
+      fmt.insert_leaf( "fn", fn.c_str(), 0 );
+      string const img_fn = nesi_filename_t_expand( &fmt, fl_img.exp );
+      string const bboxes_fn = nesi_filename_t_expand( &fmt, fl_bbox.exp );
+
+      string const & img_id = img_fn; // for this mode, use fn as id
+      p_img_info_t & img_info = img_db->id_to_img_info_map[img_id];
+
+      if( img_info ) { rt_err( "FlickrLogos-style img_db load: tried to image multiple times: '"+img_id+"'"); }
+      img_info.reset( new img_info_t( img_id ) );
+      //read_pascal_annotations_for_id( img_info, pascal_ann_dir.exp, img_id ); 
+      img_info->full_fn = img_fn;
+      img_info->ix = img_db->img_infos.size();
+      img_db->img_infos.push_back( img_info );
+
+      // read gts / bboxes (if they exist)
+      if( !boost::filesystem::is_regular_file( bboxes_fn ) ) { 
+        if( cn == "no-logo" ) { continue; } // for no_logo, can skip loading gts / bboxes if no file
+        printf( "for class cn=%s, missing bboxes file:\n", str(cn).c_str() );
+      }
+      p_vect_string bboxes_lines = readlines_fn( bboxes_fn );
+      vect_gt_det_t & gt_dets = img_info->gt_dets[cn];
+      for( vect_string::iterator i = bboxes_lines->begin(); i != bboxes_lines->end(); ++i ) {
+        boost::algorithm::trim( *i ); // not ideal, but removes trailing newlines at least (and CRs if present)
+        gt_det_t gt_det;
+        gt_det.truncated = 0;
+        gt_det.difficult = 0;
+        vect_string box_parts;
+        split( box_parts, *i, is_space(), token_compress_on );
+        if( (box_parts.size() == 1) && parts[0].empty() ) { continue; } // skip ws-only lines
+        assert( box_parts.size() == 4 );
+        if( box_parts[0] == "x" ) { continue; } // skip header
+        gt_det.p[0].read_from_line_parts( box_parts, 0 ); gt_det.p[0] -= i32_pt_t{1,1}; // 1-based, so adjust
+        gt_det.p[1].read_from_line_parts( box_parts, 2 ); gt_det.p[1] += gt_det.p[0]; // read as size, so add nc to make pc	  
+        assert_st( gt_det.is_strictly_normalized() );
+        gt_dets.push_back(gt_det);
+        if( !gt_det.difficult ) { ++gt_dets.num_non_difficult.v; } 
+      }
+      img_db->class_infos[cn].v += gt_dets.num_non_difficult.v;
+    }
+  }
+
+  string darknet_find_labels_fn_for_image_fn( string const & img_fn ) {
+    // first, check that image file ends with some image ext (could be laxer about this)
+    vect_string image_exts{ ".png", ".jpg" };
+    string labels_fn;
+    for( vect_string::const_iterator i = image_exts.begin(); i != image_exts.end(); ++i ) {
+      string maybe_labels_fn = img_fn;
+      bool const had_ext = maybe_strip_suffix( maybe_labels_fn, *i );
+      if( had_ext ) { labels_fn = maybe_labels_fn + ".txt"; break; }
+    }
+    if( labels_fn.empty() ) { rt_err( "image filename did not end with .png or .jpg (need to add new known image ext?): " + img_fn ); }
+    // next, munge path. for now, we only allow/understand our default kitti path munging scheme. note the leading slash ...
+    bool const did_rep = maybe_replace_str_with_str( labels_fn, "/image_", "/darknet_label_" );
+    if( !did_rep ) { rt_err( "failed to munge image fn into labels fn; see hard-coded scheme in code:" + img_fn ); }
+    return labels_fn;
+  }
+
+  string darknet_get_id_for_image_fn( string const & img_fn ) { return path( img_fn ).stem().string(); }
   
+  void load_pil_t::darknet_load( void ) {
+    classes = readlines_fn( darknet_classes_fn );
+    p_vect_string fl_list_lines = readlines_fn( darknet_imgs_fn );
+    for( vect_string::iterator i = fl_list_lines->begin(); i != fl_list_lines->end(); ++i ) {
+      string const & img_fn = (*i);
+      string const & img_id = darknet_get_id_for_image_fn( img_fn );
+      p_img_info_t & img_info = img_db->id_to_img_info_map[img_id];
+      if( img_info ) { rt_err( "darknet img_db load: tried to image multiple times: '"+img_id+"'"); }
+      img_info.reset( new img_info_t( img_id ) );
+      img_info->full_fn = img_fn;
+      img_info->ix = img_db->img_infos.size();
+      img_db->img_infos.push_back( img_info );
+      string const labels_fn = darknet_find_labels_fn_for_image_fn( img_fn );
+      p_istream labels_in = ifs_open( labels_fn ); // for now, we assume/assert that a GT label file will exist for every image
+      string label;
+      while( !ifs_getline( labels_fn, labels_in, label ) ) {
+        boost::algorithm::trim( label ); // not ideal, but removes trailing newlines at least (and CRs if present)
+        vect_string parts;
+        split( parts, label, is_space(), token_compress_on );
+        if( (parts.size() == 1) && parts[0].empty() ) { continue; } // skip ws-only lines
+        assert( parts.size() == 5 );
+        uint32_t const cn_ix = lc_str_u32( parts[0] );
+        if( !( cn_ix < classes->size() ) ) {
+          rt_err( strprintf( "darknet label read error: class index out of bounds: cn_ix=%s (*classes)=%s\n",
+                             str(cn_ix).c_str(), str((*classes)).c_str() ) );
+        }
+        string const & cn = classes->at( cn_ix );
+        vect_gt_det_t & gt_dets = img_info->gt_dets[cn];
+        gt_det_t gt_det;
+        gt_det.truncated = 0;
+        gt_det.difficult = 0;
+        gt_det.darknet_style = 1;
+        gt_det.x = lc_str_d( parts[1] );
+        gt_det.y = lc_str_d( parts[2] );
+        gt_det.w = lc_str_d( parts[3] );
+        gt_det.h = lc_str_d( parts[4] );
+        gt_dets.push_back(gt_det);
+        gt_dets.num_non_difficult.v += 1;
+        img_db->class_infos[cn].v += 1;
+      }
+    }
+  }
+
   void load_pil_t::load_img_db( bool const load_imgs ) {
-    if( fl_load ) { // flickr logos load
-      p_vect_string fl_list_lines = readlines_fn( fl_list );
-      set_string classes_set;
-      classes.reset( new vect_string );
-      for( vect_string::iterator i = fl_list_lines->begin(); i != fl_list_lines->end(); ++i ) {
-	boost::algorithm::trim( *i ); // not ideal, but removes trailing newlines at least (and CRs if present)
-	vect_string parts = split(*i,',');
-	if( parts.size() != 2 ) { rt_err("failed to parse line in FlickrLogos-style image list. expected exactly 1 ',', had:" + *i ); }
-	string const & cn = parts[0];
-	string const & fn = parts[1];
-	bool did_ins = classes_set.insert( cn ).second;
-	if( did_ins ) { classes->push_back( cn ); }
-	lexp_name_val_map_t fmt{ p_lexp_t() };
-	fmt.insert_leaf( "cn", cn.c_str(), 0 ); 
-	fmt.insert_leaf( "fn", fn.c_str(), 0 );
-	string const img_fn = nesi_filename_t_expand( &fmt, fl_img.exp );
-	string const bboxes_fn = nesi_filename_t_expand( &fmt, fl_bbox.exp );
-
-	string const & img_id = img_fn; // for this mode, use fn as id
-	p_img_info_t & img_info = img_db->id_to_img_info_map[img_id];
-
-	if( img_info ) { rt_err( "FlickrLogos-style img_db load: tried to image multiple times: '"+img_id+"'"); }
-	img_info.reset( new img_info_t( img_id ) );
-	//read_pascal_annotations_for_id( img_info, pascal_ann_dir.exp, img_id ); 
-	img_info->full_fn = img_fn;
-	img_info->ix = img_db->img_infos.size();
-	img_db->img_infos.push_back( img_info );
-
-	// read gts / bboxes (if they exist)
-	if( !boost::filesystem::is_regular_file( bboxes_fn ) ) { 
-	  if( cn == "no-logo" ) { continue; } // for no_logo, can skip loading gts / bboxes if no file
-	  printf( "for class cn=%s, missing bboxes file:\n", str(cn).c_str() );
-	}
-	p_vect_string bboxes_lines = readlines_fn( bboxes_fn );
-	vect_gt_det_t & gt_dets = img_info->gt_dets[cn];
-	for( vect_string::iterator i = bboxes_lines->begin(); i != bboxes_lines->end(); ++i ) {
-	  boost::algorithm::trim( *i ); // not ideal, but removes trailing newlines at least (and CRs if present)
-	  gt_det_t gt_det;
-	  gt_det.truncated = 0;
-	  gt_det.difficult = 0;
-	  vect_string box_parts;
-	  split( box_parts, *i, is_space(), token_compress_on );
-	  if( (box_parts.size() == 1) && parts[0].empty() ) { continue; } // skip ws-only lines
-	  assert( box_parts.size() == 4 );
-	  if( box_parts[0] == "x" ) { continue; } // skip header
-	  gt_det.p[0].read_from_line_parts( box_parts, 0 ); gt_det.p[0] -= u32_pt_t{1,1}; // 1-based, so adjust
-	  gt_det.p[1].read_from_line_parts( box_parts, 2 ); gt_det.p[1] += gt_det.p[0]; // read as size, so add nc to make pc	  
-	  assert_st( gt_det.is_strictly_normalized() );
-	  gt_dets.push_back(gt_det);
-	  if( !gt_det.difficult ) { ++gt_dets.num_non_difficult.v; } 
-	}
-	img_db->class_infos[cn].v += gt_dets.num_non_difficult.v;
-      }
-      if( load_imgs ) {
-#pragma omp parallel for
-	for( uint32_t i = 0; i < img_db->img_infos.size(); ++i ) { 
-	  p_img_info_t const & img_info = img_db->img_infos[i];
-	  img_info_load_img( img_info, img_info->full_fn );
-	}
-      }
-      printf( "(*classes)=%s\n", str((*classes)).c_str() );
-    } else { // pascal load
+    if( load_mode == "pascal" ) { // pascal load; handle first and return, since it loads imgs itself in subfunction
       // note: this assumes (and checks) that all the per-class file lists
       // are identical. thus, it loads all images and annotations from the
       // first class's image list file, and then just verifies that the
@@ -315,7 +421,24 @@ namespace boda
 	bool const is_first_class = (i == classes->begin());
 	read_pascal_image_list_file( filename_t_printf( pil_fn, (*i).c_str() ), load_imgs && is_first_class, !is_first_class );
       }
+      return; // note: does not fall though to loading, since loading done above
     }
+
+    // all other modes use below || iamge loading block after filling in img_infos
+    if( 0 ) { }
+    else if( load_mode == "flickr" ) { flickr_logos_load(); }
+    else if( load_mode == "darknet" ) { darknet_load(); }
+    else { rt_err( "unknown load_img_db mode: " + load_mode ); }
+
+    if( load_imgs ) {
+#pragma omp parallel for
+      for( uint32_t i = 0; i < img_db->img_infos.size(); ++i ) { 
+        p_img_info_t const & img_info = img_db->img_infos[i];
+        img_info_load_img( img_info, img_info->full_fn );
+      }
+    }
+    printf( "(*classes)=%s\n", str((*classes)).c_str() );
+    
   }
 
   void load_pil_t::show_dets( p_per_class_scored_dets_t scored_dets, uint32_t img_ix ) {
@@ -341,6 +464,25 @@ namespace boda
       assert_st( classes->size() == 1 ); // FIXME: only expects/handled single class
       p_per_class_scored_dets_t scored_dets = read_results_file( img_db, res_fn.exp, classes->front() );
       img_db->score_results_for_class( scored_dets, prc_txt_fn.exp, prc_png_fn.exp );
+    }
+  };
+
+  struct score_results_files_t : virtual public nesi, public load_pil_t // NESI(help="score a set of pascal-VOC-format results files",bases=["load_pil_t"], type_id="score-files")
+  {
+    virtual cinfo_t const * get_cinfo( void ) const; // required declaration for NESI support
+    filename_t res_fn; //NESI(default="%(bench_dir)/results/%%s_test.txt",help="format for filenames of pascal-VOC format DPM detection results files. %%s will be replaced with the class name")
+    filename_t summary_fn; //NESI(default="%(boda_output_dir)/summary.txt",help="output: all-classes text summary filename")
+    filename_t prc_txt_fn; //NESI(default="%(boda_output_dir)/prc_",help="output: text prc curve base filename")
+    filename_t prc_png_fn; //NESI(default="%(boda_output_dir)/mAP_",help="output: png prc curve base filename")
+    virtual void main( nesi_init_arg_t * nia ) {
+      load_img_db( 0 );
+      p_vect_p_per_class_scored_dets_t scored_dets( new vect_p_per_class_scored_dets_t );
+      
+      for( vect_string::const_iterator i = (*classes).begin(); i != (*classes).end(); ++i ) {
+	scored_dets->push_back( read_results_file( img_db, strprintf( res_fn.exp.c_str(), (*i).c_str() ), *i ) );
+	printf( "(*i)=%s\n", str((*i)).c_str() );
+      }
+      img_db->score_results( scored_dets, prc_txt_fn.exp, prc_png_fn.exp, summary_fn.exp, 0 );
     }
   };
 
@@ -397,8 +539,8 @@ namespace boda
   }
 
 
-  void img_db_t::score_results_for_class( p_per_class_scored_dets_t name_scored_dets,
-					  string const & prc_txt_fn, string const & prc_png_fn )
+  double img_db_t::score_results_for_class( p_per_class_scored_dets_t name_scored_dets,
+                                            string const & prc_txt_fn, string const & prc_png_fn )
   {
     timer_t t("score_results_for_class");
     string const & class_name = name_scored_dets->class_name;
@@ -411,7 +553,7 @@ namespace boda
     vect_prc_elem_t prc_elems;
     uint32_t num_pos = 0;
     uint32_t num_test = 0;
-    double map = 0;
+    double map = 0; // FIXME: misnamed, should be just 'ap'
     uint32_t print_skip = 1 + (tot_num_class / 20); // print about 20 steps in recall
     uint32_t next_print = 1;
     (*prc_out ) << strprintf( "---BEGIN--- class_name=%s tot_num_class=%s name_scored_dets->size()=%s\n", str(class_name).c_str(), str(tot_num_class).c_str(), str(all_sds->size()).c_str() );
@@ -452,17 +594,25 @@ namespace boda
       prc_plot( plt_fn, tot_num_class, prc_elems, 
 		strprintf( "class_name=%s map=%s\n", str(class_name).c_str(), str(map).c_str() ) );
     }
-
+    return map;
   }
 
   void img_db_t::score_results( p_vect_p_per_class_scored_dets_t name_scored_dets_map,
 				string const & prc_fn, string const & plot_base_fn,
+                                string const & summary_fn,
 				bool const pre_merge_post_clear ) {
     timer_t t("score_results");
+    double mean_ap = 0.0;
+    p_ostream summary_out;
+    if( !summary_fn.empty() ) { summary_out = ofs_open( summary_fn ); }
     for( vect_p_per_class_scored_dets_t::iterator i = name_scored_dets_map->begin(); i != name_scored_dets_map->end(); ++i ) {
-      score_results_for_class( *i, prc_fn, plot_base_fn );
+      double const class_ap = score_results_for_class( *i, prc_fn, plot_base_fn );
+      if( summary_out ) { (*summary_out) << strprintf( "class_name=%s ap=%s\n", str((*i)->class_name).c_str(), str(class_ap).c_str() ); }
+      mean_ap += class_ap;
       if( pre_merge_post_clear ) { (*i).reset(); }
     }
+    mean_ap /= name_scored_dets_map->size();
+    if( summary_out ) { (*summary_out) << strprintf( "all classes mean_ap=%s\n", str(mean_ap).c_str() ); }
   }
 
   struct is_comma { bool operator()( char const & c ) const { return c == ','; } };
@@ -517,8 +667,9 @@ namespace boda
 	dpm_scored_dets->push_back( read_results_file( img_db, strprintf( dpm_fn.exp.c_str(), (*i).c_str() ), *i ) );
 	printf( "(*i)=%s (DPM)\n", str((*i)).c_str() );
       }
-      img_db->score_results( hamming_scored_dets, prc_txt_fn.exp + "ham_", prc_png_fn.exp + "ham_", 0);
-      img_db->score_results( dpm_scored_dets, prc_txt_fn.exp + "dpm_", prc_png_fn.exp + "dpm_", 0 );
+      // FIXME: no summaries output here, since this code predated summary-writing code in score_results()
+      img_db->score_results( hamming_scored_dets, prc_txt_fn.exp + "ham_", prc_png_fn.exp + "ham_", "", 0);
+      img_db->score_results( dpm_scored_dets, prc_txt_fn.exp + "dpm_", prc_png_fn.exp + "dpm_", "", 0 );
 #if 1      
       p_ostream summ_out = ofs_open( score_diff_summary_fn.exp );  
       (*summ_out) << strprintf( "class_name,num_tot,ham_only,dpm_only,num_ham,num_dpm,num_both,num_either,num_neither,\n");
