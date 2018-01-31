@@ -266,18 +266,18 @@ namespace boda
     if( oi->has( "fused" ) ) { return; } // operation was fused into another, so do nothing here for it
     if( oi->is( Concat_coi ) ) {      
       uint32_t chans_out_done = 0;
-      for( uint32_t bi = 0; bi != oi->get_u32("ins_num"); ++bi ) {
+      for( uint32_t bi = 0; bi != oi->get_u32("in_bufs_num"); ++bi ) {
 	dims_t const & dims_in = oi->get_dims( oi->coi->bot_an(bi) );
-	assert_st( get_xy_dims( dims_in ) == get_xy_dims( oi->get_dims("out") ) );
-	assert_st( chans_out_done+dims_in.dsz("chan") <= oi->get_dims("out").dsz("chan") );
+	assert_st( get_xy_dims( dims_in ) == get_xy_dims( oi->get_dims("out_buf") ) );
+	assert_st( chans_out_done+dims_in.dsz("chan") <= oi->get_dims("out_buf").dsz("chan") );
         oi->set_u32( "ocix", chans_out_done );
-	set_rtc_arg( oi, rtc, "in", oi->get_arg( oi->coi->bot_an(bi) ) );
+	set_rtc_arg( oi, rtc, "in_buf", oi->get_arg( oi->coi->bot_an(bi) ) );
 	gen_call( oi );
 	chans_out_done += dims_in.dsz("chan");
-	oi->erase_arg( "in" );
+	oi->erase_arg( "in_buf" );
 	oi->erase( "ocix" );
       }
-      assert_st( chans_out_done == oi->get_dims("out").dsz("chan") );
+      assert_st( chans_out_done == oi->get_dims("out_buf").dsz("chan") );
     } else if( oi->is( Split_coi ) ) { // FIXME: pretty dup'd with Concat above ... generalize/merge/share?
       uint32_t chans_in_done = 0;
       for( uint32_t ti = 0; ti != oi->get_u32("outs_num"); ++ti ) {
@@ -332,14 +332,14 @@ namespace boda
       set_rtc_arg( oi, rtc, "inout", oi->get_arg("in") );
       gen_call( oi );
     } else if( oi->is( LRN_coi ) ) {
-      assert_st( oi->get_dims("in") == oi->get_dims("out") ); // FIXME: better place/way for this check?
-      if( oi->get_u32("emit_out_scale_base") == 1 ) {
-	string const out_scale_base = oi->get_arg("out") + "_scale_base"; 
-	rtc->create_var_with_dims( out_scale_base, oi->get_dims("out") ); // same size as out
+      assert_st( oi->get_dims("in_buf") == oi->get_dims("out_buf") ); // FIXME: better place/way for this check?
+      if( oi->get_u32("emit_out_buf_scale_base") == 1 ) {
+	string const out_scale_base = oi->get_arg("out_buf") + "_scale_base"; 
+	rtc->create_var_with_dims( out_scale_base, oi->get_dims("out_buf") ); // same size as out
 	set_rtc_arg( oi, rtc, "out_scale_base", out_scale_base );
       } else {
-	assert_st( oi->get_u32("emit_out_scale_base") == 0 );
-	oi->set_null_arg_dims( "out_scale_base", oi->get_dims("out") );
+	assert_st( oi->get_u32("emit_out_buf_scale_base") == 0 );
+	oi->set_null_arg_dims( "out_buf_scale_base", oi->get_dims("out_buf") );
       }
       gen_call( oi );
     } else if( oi->is( BckLRN_coi ) ) {

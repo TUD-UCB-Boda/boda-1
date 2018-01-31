@@ -8,10 +8,10 @@
 #include <stdlib.h>
 #include <list>
 
-#define DEBUG
+//#define DEBUG
 //#define DIRECT_GLSL
 //#define CLSPV
-#define KERNELS_PER_BUFFER 8
+#define MAX_KERNELS_PER_BUFFER 1
 
 namespace boda {
   // XXX improve/implement error handling
@@ -125,6 +125,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
     command_buffer_t* current_command_buffer = 0;
     std::list<command_buffer_t> command_buffers;
     int submitted_kernels = 0;
+    int kernels_per_buffer = 1;
     zi_bool init_done;
 
     p_map_str_vk_var_info_t vis;
@@ -825,7 +826,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
     }
 
     void submit_command(bool force) {
-      if (!force && submitted_kernels < KERNELS_PER_BUFFER)
+      if (!force && submitted_kernels < kernels_per_buffer)
 	return;
       if (!current_command_buffer)
 	return;
@@ -843,11 +844,13 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	0,
 	0
       };
-      //timer_t t("vk kernel");
+      timer_t t("vk kernel");
       BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submit_info, current_command_buffer->fence));
-      //BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
-      //t.stop();
+      BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
+      t.stop();
       current_command_buffer = nullptr;
+      if (kernels_per_buffer < MAX_KERNELS_PER_BUFFER)
+	kernels_per_buffer *= 2;
     }
     
     uint32_t run( rtc_func_call_t const & rfc ) {
@@ -1014,9 +1017,9 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       
       vkCmdWriteTimestamp(current_command_buffer->vk_cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
 			  call_evs[call_id], 1);
-
+      timer_t t(rfc.rtc_func_name);
       submit_command(false);
-
+      t.stop();
       return call_id;
     }
 
