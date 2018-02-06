@@ -21,11 +21,11 @@ namespace boda
   typedef vector< name_vect_gt_match_map_t > vect_name_vect_gt_match_map_t;
   typedef vector< vect_gt_match_t > vect_vect_gt_match_t;
 
-  struct base_scored_det_t : public u32_box_t
+  struct base_scored_det_t : public i32_box_t
   {
     double score;
     base_scored_det_t( void ) : score(0) {}
-    base_scored_det_t( u32_box_t const & b_, double const & score_ ) : u32_box_t(b_), score(score_) {}
+    base_scored_det_t( i32_box_t const & b_, double const & score_ ) : i32_box_t(b_), score(score_) {}
   };
   typedef vector< base_scored_det_t > vect_base_scored_det_t;
   typedef vector< vect_base_scored_det_t > vect_vect_base_scored_det_t;
@@ -68,11 +68,14 @@ namespace boda
   typedef vector< p_per_class_scored_dets_t > vect_p_per_class_scored_dets_t;
   typedef shared_ptr< vect_p_per_class_scored_dets_t > p_vect_p_per_class_scored_dets_t; 
 
-  struct gt_det_t : public u32_box_t
+  struct gt_det_t : public i32_box_t
   {
     uint32_t truncated;
-    uint32_t difficult;    
-    gt_det_t( void ) : truncated(0), difficult(0) { }
+    uint32_t difficult;
+    bool darknet_style;
+    double x,y,w,h; // darknet-style normalized [0,1] location; will be converted to box in image space once image is loaded.
+    void darknet_to_img_space_conv( u32_pt_t const & img_sz );
+    gt_det_t( void ) : truncated(0), difficult(0), darknet_style(0), x(0.0), y(0.0), w(0.0), h(0.0) { }
   };
   struct vect_gt_det_t : public vector< gt_det_t >
   {
@@ -88,10 +91,10 @@ namespace boda
     u32_pt_t size;
     uint32_t depth;
 #endif
-    name_vect_gt_det_map_t gt_dets;
-
+    name_vect_gt_det_map_t gt_dets;    
     p_img_t img;
     img_info_t( string const & id_ ) : id(id_), ix( uint32_t_const_max ), depth(0) { }
+    void img_loaded_hook( void );
   };
   typedef shared_ptr< img_info_t > p_img_info_t;
   typedef map< string, p_img_info_t > id_to_img_info_map_t;
@@ -117,6 +120,7 @@ namespace boda
 
   struct img_db_t;
   typedef shared_ptr< img_db_t > p_img_db_t;
+  p_per_class_scored_dets_t read_results_file( p_img_db_t img_db, string const & fn, string const & class_name );
   void write_results_file( p_img_db_t img_db, string const & fn, p_per_class_scored_dets_t scored_dets );
   void img_db_show_dets( p_img_db_t img_db, p_per_class_scored_dets_t scored_dets, uint32_t img_ix );
 
@@ -146,10 +150,10 @@ namespace boda
     string get_id_for_img_ix( uint32_t const img_ix );
     uint32_t get_ix_for_img_id( string const & img_id );
     match_res_t try_match( string const & class_name, p_per_class_scored_dets_t scored_dets, scored_det_t const & sd );
-    void score_results_for_class( p_per_class_scored_dets_t name_scored_dets, 
-				  string const & prc_txt_fn, string const & prc_png_fn );
+    double score_results_for_class( p_per_class_scored_dets_t name_scored_dets, 
+                                         string const & prc_txt_fn, string const & prc_png_fn ); // returns AP
     void score_results( p_vect_p_per_class_scored_dets_t name_scored_dets_map, 
-			string const & prc_fn, string const & plot_base_fn, bool const pre_merge_post_clear );
+			string const & prc_fn, string const & plot_base_fn, string const & summary_fn, bool const pre_merge_post_clear );
 
     u32_pt_t get_max_img_sz( void ) const;
   };
@@ -166,10 +170,13 @@ namespace boda
     p_img_db_t img_db; //NESI(default="()", help="image database")
     filename_t pil_fn; //NESI(default="%(boda_test_dir)/pascal/head_10/%%s.txt",help="format for filenames of image list files. %%s will be replaced with the class name")
 
-    uint32_t fl_load; //NESI(default=0,help="if 1, load a FlickrLogos-style image dataset. (note: disables pascal loading)")
+    string load_mode; //NESI(default="pascal",help="options: 'pascal', 'flickr' for FlickrLogos-style image dataset; 'darknet' for darknet-style list of image filenames")
     filename_t fl_bbox; //NESI(default="%(datasets_dir)/flickrlogos/all_bboxes/%%(fn).bboxes.txt",help="format for filenames of per-image bbox files. %%(fn) will be replaced with the image filename (e.g. 01032234.jpg), %%(cn) will be replaced with the category")
     filename_t fl_img; //NESI(default="%(datasets_dir)/flickrlogos/all_images/%%(fn)",help="format for filenames of per-image bbox files. %%(fn) will be replaced with the image filename (e.g. 01032234.jpg), %%(cn) will be replaced with the category")
     filename_t fl_list; //NESI(default="%(datasets_dir)/flickrlogos/all.txt",help="path to FlickrLogos-style list of images")
+
+    filename_t darknet_imgs_fn; //NESI(default="%(datasets_dir)/KITTI/darknet-val.txt",help="path to darknet-style file with list of image filenames")
+    filename_t darknet_classes_fn; //NESI(default="%(datasets_dir)/KITTI/darknet-kitti.names",help="path to darknet-style file with list of classes (one per line, matches 0-based indexes in GT labels")
 
     p_vect_string classes;
     void load_img_db( bool const load_imgs );
@@ -177,6 +184,8 @@ namespace boda
     void show_dets( p_per_class_scored_dets_t scored_dets, uint32_t img_ix );
 
   private:
+    void flickr_logos_load( void );
+    void darknet_load( void );
     void read_pascal_image_list_file( filename_t const & class_pil_fn, bool const load_imgs, bool const check_ix_only );
     void load_pascal_data_for_id( string const & img_id, bool load_img, uint32_t const in_file_ix, bool check_ix_only );
     void read_pascal_image_for_id( p_img_info_t img_info );

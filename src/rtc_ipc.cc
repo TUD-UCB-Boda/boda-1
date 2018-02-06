@@ -205,8 +205,8 @@ namespace boda
       addrinfo hints = {0};
       hints.ai_socktype = SOCK_STREAM; // want reliable communication, 
       hints.ai_protocol = IPPROTO_TCP; // ... with  TCP (minimally because we try to set TCP_NODELAY) ...
-      // hints.ai_family = AF_INET; // but allow any family (IPv4 or IPv6). or, uncomment to force IPv4
-      hints.ai_flags = AI_PASSIVE; // for binding to wildcard addr
+      hints.ai_family = AF_UNSPEC; // but allow any family (IPv4 or IPv6). or, uncomment to force IPv4
+      hints.ai_flags = AI_PASSIVE|AI_ADDRCONFIG; // bind to wildcard, use AI_ADDRCONFIG scheme for filtering out IPv4/IPv6 if not in use
 
       int const aret = getaddrinfo( 0, port.c_str(), &hints, &rp_bind_addrs );
       if( aret != 0 ) { rt_err( strprintf("getaddrinfo with port %s failed: %s", port.c_str(), gai_strerror( aret ) ) ); }
@@ -296,7 +296,7 @@ namespace boda
     virtual cinfo_t const * get_cinfo( void ) const; // required declaration for NESI support
     zi_bool init_done;
     string boda_parent_addr; //NESI(default="", help="address to use for communication. FIXME: document.")
-    string remote_rtc; //NESI(default="(be=ocl)",help="remote rtc configuration")
+    string remote_rtc; //NESI(default="(be=nvrtc)",help="remote rtc configuration")
     p_string fifo_fn; //NESI(help="if set, use a named fifo for communication instead of a socketpair.")
     uint32_t print_dont_fork; //NESI(default=0,help="if set, don't actually fork to create a fifo-based worker, just print the command to do so.")
     p_string spawn_str; //NESI(help="command to spawn worker process, passed to os.system(). if not set, boda will use fork() to create a local worker. the worker's arguments will be appended.")
@@ -544,7 +544,7 @@ moskewcz@maaya:~/git_work/boda/run/tr4$ boda cs_test_worker --boda-parent-addr=f
   struct ipc_compute_worker_t : virtual public nesi, public has_main_t // NESI(help="rtc-over-IPC worker/client", bases=["has_main_t"], type_id="ipc_compute_worker")
   {
     virtual cinfo_t const * get_cinfo( void ) const; // required declaration for NESI support
-    p_rtc_compute_t rtc; //NESI(default="(be=ocl)",help="rtc back-end to use")
+    p_rtc_compute_t rtc; //NESI(default="(be=nvrtc)",help="rtc back-end to use")
 
     string boda_parent_addr; //NESI(help="how to communicate with boda parent process; either open fds (perhaps created by socketpair() in the parent process, or perhaps stdin/stdout), or the names of a pair of named files/fifos to open.",req=1)
 

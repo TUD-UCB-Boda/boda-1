@@ -9,8 +9,9 @@
 
 
 [base] # special basic setup / global dependencies; always enabled, will always be emmited first in dependencies.make
+VPATH := $(VPATH) ../src ../src/ext
 CPP := g++
-CPPFLAGS := -Wall -O3 -g -std=c++0x -rdynamic -fPIC -fopenmp -Wall -I. # -I. is so files in gen/* can be included ... not ideal?
+CPPFLAGS := -fuse-ld=gold -Wall -O3 -g -std=c++0x -rdynamic -fPIC -fopenmp -Wall -I. # -I. is so files in gen/* can be included ... not ideal?
 LDFLAGS := -lboost_system -lboost_filesystem -lboost_iostreams -lboost_regex -lboost_program_options 
 
 [lmdb]
@@ -25,15 +26,23 @@ LDFLAGS := $(LDFLAGS) -loctave -loctinterp
 CPPFLAGS := $(CPPFLAGS) -I/usr/include/SDL2 -I/usr/local/include/SDL2
 LDFLAGS := $(LDFLAGS) -lSDL2 -lSDL2_ttf -lrt
 
-[caffe_pb gen_fn=caffe.pb.cc gen_fn=caffe.pb.h]
+[OSMesa]
+LDFLAGS := $(LDFLAGS) -lOSMesa -lm -lGLU -lGLEW
+
+[protobuf]
 LDFLAGS := $(LDFLAGS) -lprotobuf
+ifndef PROTOC
+  PROTOC := protoc
+endif
+
+[caffe_pb gen_fn=caffe.pb.cc gen_fn=caffe.pb.h needs=protobuf]
 # manually add deps since we can create this particular header (which is unusual and otherwise unhandled by the header
 # deps system.
 caffepb.o : caffe.pb.h 
 upgrade_proto.o : caffe.pb.h 
 # note: it may be possible to not rebuild caffe.pb.h / caffe.pb.cc in some cases
 caffe.pb.cc caffe.pb.h : ../src/ext/caffe.proto
-	protoc -I../src/ext --cpp_out=. ../src/ext/caffe.proto
+	$(PROTOC) -I../src/ext --cpp_out=. ../src/ext/caffe.proto
 
 
 [cuda disable]
@@ -51,7 +60,7 @@ LDFLAGS := $(LDFLAGS) -lcublas -lcudnn
 [nvrtc disable] #needs=cuda]
 LDFLAGS := $(LDFLAGS) -lnvrtc
 
-[opencl]
+[opencl disable]
 LDFLAGS := $(LDFLAGS) -lOpenCL
 
 [vulkan] # XXX make this work in general
@@ -60,8 +69,8 @@ SHADERC_PATH:= /home/jschulte/vulkan_backend/shaderc
 CPPFLAGS := $(CPPFLAGS) -I$(VULKAN_SDK_PATH)/include/vulkan -I$(SHADERC_PATH)/libshaderc/include
 LDFLAGS := $(LDFLAGS) -L$(VULKAN_SDK_PATH)/lib -lvulkan -L$(SHADERC_PATH)/build/libshaderc -l:libshaderc_combined.a
 
-[caffe disable] #needs=cuda needs=caffe_pb]
-CAFFE_HOME := /home/moskewcz/git_work/caffe_dev
+[caffe needs=cuda needs=caffe_pb]
+CAFFE_HOME := /mnt/nfs/home/moskewcz/git-work/caffe
 CAFFE_LIB := $(CAFFE_HOME)/build/lib
 CPPFLAGS := $(CPPFLAGS) -I$(CAFFE_HOME)/include -I$(CAFFE_HOME)/build/include -I$(CAFFE_HOME)/build/src
 LDFLAGS := $(LDFLAGS) -L$(CAFFE_LIB) -lcaffe -lglog -ldl 
@@ -79,8 +88,14 @@ LDFLAGS := $(LDFLAGS) -lpython2.7
 [turbojpeg] # disable-able, but will cause any test/mode that tries to load a .jpeg to fail at run-time
 LDFLAGS := $(LDFLAGS) -lturbojpeg
 
-[stacktrace_gnu] # if enabled, get stacktrace using gnu extentions backtrace() and backtrace_symbols() 
+[FFmpeg]
+LDFLAGS := $(LDFLAGS) -lavcodec -lavformat -lavutil
 
+[RoS]
+LDFLAGS := $(LDFLAGS) -lcpp_common -lrosconsole -lrosconsole_print -lrosconsole_backend_interface -lconsole_bridge -ltopic_tools -lroscpp -lrosbag -lrosbag_storage -lrostime -lroscpp_serialization # others? sigh. not too obvious what the full/right set is.
+
+
+[stacktrace_gnu] # if enabled, get stacktrace using gnu extentions backtrace() and backtrace_symbols() 
 
 # list of object files to compile. at least the objects that are direct dependencies of the above sections should be
 # marked by adding the dependency section name after the object file below. thus, if the dependency is disabled, the
@@ -91,6 +106,17 @@ LDFLAGS := $(LDFLAGS) -lturbojpeg
 # particular dependency. note that some dependencies may not usefully be disable-able.
 
 [objs]
+data-stream-rosbag.o RoS
+data-stream-ffmpeg.o FFmpeg
+os-render.o OSMesa
+shader.o OSMesa
+data-stream-velo.o
+data-stream-pcap.o
+data-stream-mxnet.o
+data-stream-file.o
+data-to-img.o
+data-stream.o
+raw-vid-disp.o
 op-tuner.o
 cnn_op.o
 culibs-wrap.o culibs

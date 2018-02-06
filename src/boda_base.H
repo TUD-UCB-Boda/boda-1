@@ -32,6 +32,7 @@ namespace boost {
 namespace boda
 {
   struct zi_uint32_t { uint32_t v; zi_uint32_t( void ) : v(0) { } };
+  struct zi_uint64_t { uint64_t v; zi_uint64_t( void ) : v(0) { } };
   struct zi_bool { bool v; zi_bool( void ) : v(0) { } zi_bool( bool const & v_ ) : v(v_) { } };
 
   uint64_t const uint64_t_const_max = boost::integer_traits< uint64_t >::const_max;
@@ -44,10 +45,14 @@ namespace boda
   uint8_t const uint8_t_const_max = boost::integer_traits< uint8_t >::const_max;
   int8_t const int8_t_const_max = boost::integer_traits< int8_t >::const_max;
   int8_t const int8_t_const_min = boost::integer_traits< int8_t >::const_min;
+  float const float_const_max = std::numeric_limits<float>::max();
+  float const float_const_min = std::numeric_limits<float>::lowest(); // note: ::min() is the lowest pos value ... sigh/sorry!
 
   // note: returns 0 for v==0
   inline uint64_t floor_log2_u64( uint64_t v ) { uint64_t ret = 0; while( v >>= 1 ) { ++ret; } return ret; }
-  
+
+  template< typename T > inline T clamp( T const & v, T const & min_v, T const & max_v  ) { return std::min( std::max( v, min_v ), max_v ); }
+  template< typename T > inline void clamp_eq( T & v, T const & min_v, T const & max_v  ) { v = std::min( std::max( v, min_v ), max_v ); }
   template< typename T > inline void min_eq( T & v, T const & o ) { v = std::min( v, o ); }
   template< typename T > inline void max_eq( T & v, T const & o ) { v = std::max( v, o ); }
   inline uint32_t u32_ceil_div( uint32_t const & val, uint32_t const & d ) { return (val + d - 1) / d; }
@@ -80,6 +85,7 @@ namespace boda
   typedef shared_ptr< vect_rp_void > p_vect_rp_void;
   typedef vector< char * > vect_rp_char;
   typedef vector< char const * > vect_rp_const_char;
+  typedef vector< uint8_t * > vect_rp_uint8_t;
   string stacktrace_str( p_vect_rp_void bt, uint32_t strip_frames );
   p_vect_rp_void get_backtrace( void );
 
@@ -230,6 +236,9 @@ namespace boda
   typedef vector< uint8_t > vect_uint8_t;  
   typedef shared_ptr< uint8_t > p_uint8_t;  
   typedef vector< p_uint8_t > vect_p_uint8_t;  
+  typedef vector< uint16_t > vect_uint16_t;  
+  typedef shared_ptr< uint16_t > p_uint16_t;  
+  typedef vector< p_uint16_t > vect_p_uint16_t;  
   typedef vector< uint32_t > vect_uint32_t;
   typedef shared_ptr< uint32_t > p_uint32_t;  
   typedef vector< int32_t > vect_int32_t;
@@ -243,6 +252,7 @@ namespace boda
   p_uint8_t make_mmap_shared_p_uint8_t( int const fd, size_t const length, off_t const offset );
   void remap_mmap_shared_p_uint8_t( p_uint8_t &p, size_t const new_length );
   void * posix_memalign_check( size_t const sz, uint32_t const a );
+  uint32_t const boda_default_align = 4096; // yep.
   // ma_p == make aligned shared_ptr. note: alloc'd with posix_memaling() and has custom deleter that invokes free()
   template< typename T > inline shared_ptr< T > ma_p_T( uint32_t const num, uint32_t const a ) {
     return shared_ptr< T >( (T *)posix_memalign_check( sizeof(T)*num, a), free );
@@ -257,6 +267,12 @@ namespace boda
 
   __attribute__((used)) uint32_t const boda_magic= *(uint32_t *)"BODA";
 
+  struct p_uint8_with_sz_t : public p_uint8_t {
+    uint64_t sz;
+    p_uint8_with_sz_t( uint8_t * & p, uint64_t const & sz_ ) : p_uint8_t( p ), sz(sz_) {}
+    template< typename DELETER > p_uint8_with_sz_t( uint8_t * const & p, uint64_t const & sz_, DELETER const & deleter ) : p_uint8_t( p, deleter ), sz(sz_) {}
+    template< typename ALIAS_SRC > p_uint8_with_sz_t( ALIAS_SRC const & alias_src, uint8_t * const & p, uint64_t const & sz_ ) : p_uint8_t( alias_src, p ), sz(sz_) {}
+  };
 
   // the b{read,write}_bytes() functions are the basic low-level read/write that must be implimented
   // for any stream class we wish to use for IO. the two basic ones here are for istream/ostream and
@@ -276,15 +292,24 @@ namespace boda
   bwrite_bytes( AsioWritable & out, char const * const & d, size_t const & sz ); //write( out, buffer( d, sz ) ); }
   template< typename AsioReadable, typename check_T<typename AsioReadable::lowest_layer_type>::int_ = 0 > void 
   bread_bytes( AsioReadable & in, char * const & d, size_t const & sz ); // read( in, buffer( d, sz ) ); }
+
+  // similarly, for mapped file reader (and anthing else with has_bread_bytes, we need the relevant pre-declaration
+  template< typename HasBreadBytes, typename check_T<typename HasBreadBytes::has_bread_bytes>::int_ = 0 > void 
+  bread_bytes( HasBreadBytes & in, char * const & d, size_t const & sz );
+
 #endif
 
   template< typename T > struct breadwrite_raw_T { };
   template<> struct breadwrite_raw_T<bool>{ typedef int int_; };
-  template<> struct breadwrite_raw_T<uint8_t>{ typedef int int_; };
   template< typename T > struct T_pt_t; template<> struct breadwrite_raw_T<T_pt_t<uint32_t> >{ typedef int int_; };
+  template<> struct breadwrite_raw_T<uint8_t>{ typedef int int_; };
+  template<> struct breadwrite_raw_T<uint16_t>{ typedef int int_; };
   template<> struct breadwrite_raw_T<uint32_t>{ typedef int int_; };
-  template<> struct breadwrite_raw_T<int32_t>{ typedef int int_; };
   template<> struct breadwrite_raw_T<uint64_t>{ typedef int int_; };
+  template<> struct breadwrite_raw_T<int8_t>{ typedef int int_; };
+  template<> struct breadwrite_raw_T<int16_t>{ typedef int int_; };
+  template<> struct breadwrite_raw_T<int32_t>{ typedef int int_; };
+  template<> struct breadwrite_raw_T<int64_t>{ typedef int int_; };
   template<> struct breadwrite_raw_T<half>{ typedef int int_; };
   template<> struct breadwrite_raw_T<float>{ typedef int int_; };
   template<> struct breadwrite_raw_T<double>{ typedef int int_; };
@@ -442,6 +467,7 @@ namespace boda
   ndat_info_t const double_ndat{"double",8,1,1};
   ndat_info_t const int32_t_ndat{"int32_t",4,0,1};
   ndat_info_t const uint32_t_ndat{"uint32_t",4,0,0};
+  ndat_info_t const uint16_t_ndat{"uint16_t",2,0,0};
   ndat_info_t const uint8_t_ndat{"uint8_t",1,0,0};
   template< typename T > inline ndat_info_t const & get_ndat( void );
   template<> inline ndat_info_t const & get_ndat<void>( void ) { return none_ndat; }
@@ -449,6 +475,7 @@ namespace boda
   template<> inline ndat_info_t const & get_ndat<float>( void ) { return float_ndat; }
   template<> inline ndat_info_t const & get_ndat<double>( void ) { return double_ndat; }
   template<> inline ndat_info_t const & get_ndat<uint32_t>( void ) { return uint32_t_ndat; }
+  template<> inline ndat_info_t const & get_ndat<uint16_t>( void ) { return uint16_t_ndat; }
   template<> inline ndat_info_t const & get_ndat<int32_t>( void ) { return int32_t_ndat; }
   template<> inline ndat_info_t const & get_ndat<uint8_t>( void ) { return uint8_t_ndat; }
   typedef map< string, rp_ndat_info_t > ndat_infos_t;
@@ -459,6 +486,7 @@ namespace boda
     {double_ndat.tn,&double_ndat},
     {int32_t_ndat.tn,&int32_t_ndat},
     {uint32_t_ndat.tn,&uint32_t_ndat},
+    {uint16_t_ndat.tn,&uint16_t_ndat},
     {uint8_t_ndat.tn,&uint8_t_ndat},
   };
 
@@ -643,10 +671,25 @@ namespace boda
       return d0i*strides(0) + d1i*strides(1) + d2i*strides(2); }
     uint32_t ix4( uint32_t const d0i, uint32_t const d1i, uint32_t const d2i, uint32_t const d3i ) const { 
       return d0i*strides(0) + d1i*strides(1) + d2i*strides(2) + d3i*strides(3); }
+
+    uint32_t chk_ix1( uint32_t const d0i ) const {
+      if( ! ( ( d0i < dims(0) ) ) ) { rt_err( "dims-invalid-index" ); }
+      return ix1( d0i ); }
+    uint32_t chk_ix2( uint32_t const d0i, uint32_t const d1i ) const {
+      if( ! ( ( d0i < dims(0) ) && ( d1i < dims(1) ) ) ) { rt_err( "dims-invalid-index" ); }      
+      return ix2( d0i, d1i ); }
+    uint32_t chk_ix3( uint32_t const d0i, uint32_t const d1i, uint32_t const d2i ) const {
+      if( ! ( ( d0i < dims(0) ) && ( d1i < dims(1) ) && ( d2i < dims(2) ) ) ) { rt_err( "dims-invalid-index" ); }            
+      return ix3( d0i, d1i, d2i ); }
+    uint32_t chk_ix4( uint32_t const d0i, uint32_t const d1i, uint32_t const d2i, uint32_t const d3i ) const {
+      if( ! ( ( d0i < dims(0) ) && ( d1i < dims(1) ) && ( d2i < dims(2) ) && ( d3i < dims(3) ) ) ) { rt_err( "dims-invalid-index" ); }                  
+      return ix4( d0i, d1i, d2i, d3i ); }
+    
   };
 
   typedef vector< dims_t > vect_dims_t; 
-
+  typedef shared_ptr< dims_t > p_dims_t; 
+  
   // note: iterates over last/fast dim innermost.
   struct dims_iter_t {
     vect_uint32_t b;
@@ -700,17 +743,28 @@ namespace boda
     bread( in, o.strides_valid.v );
   }
 
+  struct nda_t;
+  typedef shared_ptr< nda_t > p_nda_t; 
+
   struct nda_t {
     nda_t( void ) { }
     nda_t( dims_t const & dims_ ) { nda_set_dims( dims_ ); alloc(); }
+    nda_t( dims_t const & dims_, p_uint8_t const &d_ ) { nda_set_dims( dims_ ); d = d_; } // create from existing data held by p_uint8_t
     // below ctor is for no-ownership-transfer references to 'remote' NDAs where the data is behine an opaque void *
     nda_t( dims_t const & dims_, void * const & elems_ ) { 
       d.reset( (uint8_t *)elems_, null_deleter<uint8_t>() ); 
       nda_set_dims( dims_ ); 
       // note: no alloc, even if d was explicitlt set to null (which is the dims-only/no-data case)
     }
+    p_nda_t clone( void ) const {
+      p_nda_t ret( make_shared<nda_t>( dims ) );
+      std::copy( d.get(), d.get() + dims.bytes_sz(), ret->d.get() );
+      return ret;
+    }
     void const * rp_elems( void ) const { return (void const *)d.get(); }
     void * rp_elems( void ) { return (void *)d.get(); }
+    p_uint8_t const & get_internal_data( void ) { return d; } // be careful with this ...
+    void reshape( dims_t const & new_dims );
   protected:
     p_uint8_t d;
   public:
@@ -764,6 +818,7 @@ namespace boda
     else if( tn == double_ndat.tn ) { func.template operator()<double>(); }
     else if( tn == int32_t_ndat.tn ) { func.template operator()<int32_t>(); }
     else if( tn == uint32_t_ndat.tn ) { func.template operator()<uint32_t>(); }
+    else if( tn == uint16_t_ndat.tn) { func.template operator()<uint16_t>(); }
     else if( tn == uint8_t_ndat.tn) { func.template operator()<uint8_t>(); }
     else { rt_err( "unhandled type in tn_dispatch; tn=" + tn ); } 
   }
@@ -783,11 +838,15 @@ namespace boda
   }
   
   typedef vector< nda_t > vect_nda_t; 
-  typedef shared_ptr< nda_t > p_nda_t; 
   typedef vector< p_nda_t > vect_p_nda_t;
   typedef map< string, p_nda_t > map_str_p_nda_t;
   typedef shared_ptr< map_str_p_nda_t > p_map_str_p_nda_t;
   typedef vector< p_map_str_p_nda_t > vect_p_map_str_p_nda_t;
+
+  template< typename T > T * nda_rp_elems( p_nda_t const & nda ) {
+    assert_st( get_ndat<T>().tn == nda->dims.tn );
+    return static_cast<T *>(nda->rp_elems());
+  }
 
   template< typename T > T nda_at( p_nda_t const & nda, dims_iter_t const & di ) {
     assert_st( get_ndat<T>().tn == nda->dims.tn );
@@ -944,7 +1003,13 @@ namespace boda
   typedef shared_ptr< map_str_p_vect_p_nda_float_t > p_map_str_p_vect_p_nda_float_t;
 
   typedef nda_T< uint8_t > nda_uint8_t;
+  typedef shared_ptr< nda_uint8_t > p_nda_uint8_t; 
+  typedef vector< p_nda_uint8_t > vect_p_nda_uint8_t;
 
+  typedef nda_T< uint16_t > nda_uint16_t;
+  typedef shared_ptr< nda_uint16_t > p_nda_uint16_t; 
+  typedef vector< p_nda_uint16_t > vect_p_nda_uint16_t;
+  
   struct ssds_diff_per_type_t {
     virtual void cnt_diff_elems( void ) = 0;
     virtual void sum_squared_diffs( void ) = 0;

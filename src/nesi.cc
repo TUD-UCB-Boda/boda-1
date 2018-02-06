@@ -333,8 +333,9 @@ namespace boda
       void * fo = 0;
       vinfo_t const * vi = nesi_struct_find_var( ci, o, help_args->at(help_ix), fo ); // may or may not set fo
       if( !vi ) { 
-	*os += strprintf("struct '%s' has no field '%s', so help cannot be provided for it.\n",
+	*os += strprintf("struct '%s' has no field '%s', so help cannot be provided for it. Ignoring remaining args and showing help here.\n",
 			 ci->cname, help_args->at(help_ix).c_str() );
+	nesi_struct_nesi_help( tinfo, o, os, prefix, show_all, help_args, help_args->size() ); // call to self
       } else {
 	*os += strprintf( "%sDESCENDING TO DETAILED HELP FOR field '%s' of type=%s of struct '%s'\n",
 			  prefix.c_str(), vi->vname, vi->tinfo->tname, ci->cname );
@@ -590,6 +591,13 @@ namespace boda
   vect_push_back_t * uint64_t_vect_push_back = &has_def_ctor_vect_push_back_t< uint64_t >;
   nesi_dump_t * uint64_t_nesi_dump = &with_op_left_shift_nesi_dump< uint64_t >;
   void *uint64_t_init_arg = (void *)"uint64_t (64-bit unsigned integer)";
+
+  // float  
+  init_t * nesi_float_init = &nesi_lexcast_init< float >;
+  make_p_t * float_make_p = &has_def_ctor_make_p< float >;
+  vect_push_back_t * float_vect_push_back = &has_def_ctor_vect_push_back_t< float >;
+  nesi_dump_t * float_nesi_dump = &with_op_left_shift_nesi_dump< float >;
+  void *float_init_arg = (void *)"float (single precision floating point number)";
 
   // double  
   init_t * nesi_double_init = &nesi_lexcast_init< double >;

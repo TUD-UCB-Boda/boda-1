@@ -11,6 +11,14 @@
 
 namespace boda 
 {
+  p_img_t img_t::clone( void ) const {
+    if( !yuv_pels.empty() ) { rt_err( "img_t clone() with non-empty yuv_pels unsuported/TODO" ); }
+    p_img_t ret = make_shared<img_t>( *this ); // copy size, row_pitch, etc ...
+    ret->alloc_pels(); // realloc pels in clone
+    std::copy( pels.get(), pels.get()+sz_raw_bytes(), ret->pels.get() ); // copy pels to clone
+    return ret;
+  }
+  
   void img_t::load_fn( std::string const & fn )
   {
     ensure_is_regular_file( fn );
@@ -37,12 +45,48 @@ namespace boda
   void img_t::alloc_pels( void ) { pels = ma_p_uint8_t( sz_raw_bytes(), row_align ); }
   void img_t::set_sz_and_alloc_pels( u32_pt_t const & sz_ ) { set_sz( sz_ ); alloc_pels(); }
 
+  
+  // note: this is a bit hacky/limited: only the sz and yuv_pels fields of the img will be set. also, no padding/stride
+  // is supported for the planes (but maybe it could/should be).
+  void img_t::set_sz_and_pels_from_yuv_420_planes( vect_p_nda_uint8_t const & yuv_ndas ) {
+    assert_st( yuv_ndas.size() == 3 );
+    for( uint32_t pix = 0; pix != 3; ++pix ) {
+      yuv_pels.push_back( yuv_ndas[pix]->get_internal_data() );
+      u32_pt_t yuv_sz = get_xy_dims_strict( yuv_ndas[pix]->dims );
+      if( !pix ) {
+        sz = yuv_sz;
+        // note: we don't set row_align, row_pitch, row_pitch_pels (leaving them at zero), since we don't set pels and
+        // should not use them.
+      } else {
+        // FIXME/NOTE: could relax. per dim, if size of Y plane is odd, sizes of UV places should be ceil_div-by-2 of it.
+        if( yuv_sz.scale(2) != sz ) { rt_err( strprintf( "yuv plane size mismatch. Y sz=%s, but for pix=%s, yuv_sz=%s\n",
+                                                         str(sz).c_str(), str(pix).c_str(), str(yuv_sz).c_str() ) ); }
+      }
+    }
+  }
+
+  // FIXME/note: no hanlding of (non-existant) YUV strides here
+  void img_t::get_YUV_row_addr( uint32_t const y, uint8_t const * & yr, uint8_t const * & ur, uint8_t const * & vr ) {
+    assert_st( yuv_pels.size() == 3 );
+    yr = yuv_pels[0].get() + y * sz.d[0];
+    uint32_t const uvoff = (y/2) * ((sz.d[0]+1)/2);
+    ur = yuv_pels[1].get() + uvoff;
+    vr = yuv_pels[2].get() + uvoff;
+  }
+
+  
   void img_t::fill_with_pel( uint32_t const & v ) {
     uint64_t const vv = (uint64_t(v) << 32) + v;
     uint64_t * const dest_data = (uint64_t *) pels.get(); 
     assert_st( !(row_pitch_pels&1) );
 #pragma omp parallel for
     for( uint32_t i = 0; i < (row_pitch_pels>>1)*sz.d[1]; ++i ) { dest_data[i] = vv; }
+  }
+  
+  void img_t::load_fn_jpeg( std::string const & fn ) {
+    p_mapped_file_source mfile = map_file_ro( fn );
+    p_uint8_with_sz_t mfile_data( mfile, (uint8_t *)mfile->data(), mfile->size() ); // alias ctor to bind lifetime to mapped file
+    from_jpeg( mfile_data, fn );
   }
 
   void img_t::load_fn_png( std::string const & fn )

@@ -22,18 +22,25 @@ namespace boda
     uint32_t row_align; // what power-of-2 alignement is ensured for all row starts
     uint32_t row_pitch; // bytes between rows
     uint32_t row_pitch_pels; // pixels between rows
-    p_uint8_t pels; // raw pixel data    
+    p_uint8_t pels; // raw pixel data
+    vect_p_uint8_t yuv_pels; // pixel data in YUV 420 format. NOTE: only partially supported and used in selected areas.
     img_t( void ) : depth(4), row_align(0), row_pitch(0), row_pitch_pels(0) {}
+    p_img_t clone( void ) const;
     // if desired, call to set requested row alignment *before* loading
     void set_row_align( uint32_t const row_align_ ) { assert(!row_align); row_align = row_align_; }
     void set_sz( u32_pt_t const & sz_ );
     void alloc_pels( void );
     void set_sz_and_alloc_pels( u32_pt_t const & sz_ );
+    void set_sz_and_pels_from_yuv_420_planes( vect_p_nda_uint8_t const & yuv_pels_ );
 
     void fill_with_pel( uint32_t const & v );
     void load_fn( std::string const & fn );
     void load_fn_jpeg( std::string const & fn );
+    p_uint8_with_sz_t to_jpeg( void );
+    void save_fn_jpeg( std::string const & fn );
     void load_fn_png( std::string const & fn );
+    void from_jpeg( p_uint8_with_sz_t const & data, std::string const & fn );
+
     void save_fn_png( std::string const & fn, bool const disable_compression = 0 );
 
     // always equivalent to y*row_pitch_pels + x (i.e get_pel_ix(0,0) will always == 0)
@@ -50,10 +57,12 @@ namespace boda
     }
     uint32_t sz_raw_bytes( void ) const { return row_pitch*sz.d[1]; }
     uint32_t * get_row_addr( uint32_t const y ) { return get_pel_addr({0,y}); }
+    void get_YUV_row_addr( uint32_t const y, uint8_t const * & yr, uint8_t const * & ur, uint8_t const * & vr );
+    
     string WxH_str( void );
     void share_pels_from( p_img_t o );
   };
-  
+
   inline p_img_t make_p_img_t( u32_pt_t const & sz ) { 
     p_img_t ret( new img_t ); ret->set_sz_and_alloc_pels( sz ); return ret; }
 
