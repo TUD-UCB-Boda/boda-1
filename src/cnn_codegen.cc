@@ -15,7 +15,8 @@ namespace boda
       else if( op_name == "ipconv" ) { gen_op_ipconv(rcg); } 
       else if( op_name == "k1conv" ) { gen_op_k1conv(rcg); } 
       else if( op_name == "k1conv_simd" ) { gen_op_k1conv_simd(rcg); } 
-      else if( op_name == "tconv" ) { gen_op_tconv(rcg); } 
+      else if( op_name == "tconv" ) { gen_op_tconv(rcg); }
+      else if (op_name == "sconv" ) { gen_op_sconv(rcg); }
       else if( op_name == "sgemm" ) { gen_op_sgemm(rcg); } 
       else if( op_name == "sgemm_no_local" ) { gen_op_sgemm_no_local(rcg); } 
       else if( op_name == "sgemm_simd" ) { gen_op_sgemm_simd(rcg); } 
@@ -451,6 +452,7 @@ namespace boda
 	  rcg->line( code_sec, strprintf("if( (LOC_ID_1D+%s) < %s ) {", str(iter_sm_off).c_str(), str(sm_sz).c_str() ) ); eif="}";}
         string vn_vw = vn;
         assert_st( vw );
+	// XXX if vw is ever > for sconv, this will fail as a_tn is undefinded in sconv
         if( vw > 1 ) { vn_vw = strprintf("((GASQ %%(a_tn)%s const *)(%s))", str(vw).c_str(), vn.c_str() ); }
         assert_st( vdims.tinfo().is_float == 1 );
         bool const half_to_float = (vdims.tsz() == 2);
@@ -835,6 +837,59 @@ namespace boda
 	}
       }
     }
+
+    
+    void gen_op_sconv( rtc_call_gen_t * rcg ) {
+      dims_t const & work = rcg->get_arg_dims_by_name( "work" );
+      uint64_t const blk_M = work.dsz("Mb")*work.dsz("Mt");
+      uint32_t const filts_sm_sz = blk_M*work.dsz("Kb");
+      gen_sgemm_sm_load( rcg, "sm_loads", "filts", filts_sm_sz, blk_M, rcg->get_arg_dims_by_name("filts"), 1 );
+      uint64_t const blk_N = work.dsz("Nb")*work.dsz("Nt");
+      uint32_t const in_buf_sm_sz = blk_N*work.dsz("Kb");
+      gen_sgemm_sm_load( rcg, "sm_loads", "in_buf", in_buf_sm_sz, blk_N, rcg->get_arg_dims_by_name("in_buf"), 1 );
+      
+      for( uint32_t Kb = 0; Kb != work.dsz("Kb"); ++Kb ) {
+	for( uint32_t Mt = 0; Mt != work.dsz("Mt"); ++Mt ) {
+	  rcg->line( "inner_loop_body", strprintf( "filts_r[%s] = filts_sm[filts_sm_off + %s];", str(Mt).c_str(), str(Mt+Kb*blk_M).c_str()));
+	}
+	for( uint32_t Nt = 0; Nt != work.dsz("Nt"); ++Nt ) {
+	  rcg->line( "inner_loop_body", strprintf( "in_buf_r[%s] = in_buf_sm[in_buf_sm_off + %s];", str(Nt).c_str(), str(Nt+Kb*blk_N).c_str()));
+	  //rcg->line( "inner_loop_body", strprintf( "in_buf_r[%s] = b[k*%%(in_buf_K_stride)+thr_N+%s];", str(Nt).c_str(), str(Nt).c_str() ) );
+	}
+	for( uint32_t Mt = 0; Mt != work.dsz("Mt"); ++Mt ) {
+          for( uint32_t Nt = 0; Nt != work.dsz("Nt"); ++Nt ) {
+            uint32_t const rix = (Mt*work.dsz("Nt")+Nt);
+            rcg->line( "inner_loop_body", strprintf( "out_buf_r[%s] += filts_r[%s]*in_buf_r[%s];",str(rix).c_str(), 
+                                                     str(Mt).c_str(), str(Nt).c_str()));
+          }
+        }
+      }
+      dims_t const & out_buf_dims = rcg->get_arg_dims_by_name("out_buf");
+      assert( out_buf_dims.tinfo().is_float );
+      assert(out_buf_dims.tsz() == 4);
+      gen_sconv_write_out( rcg );
+    }
+    
+    void gen_sconv_write_out( rtc_call_gen_t * rcg ) {
+      dims_t const & work = rcg->get_arg_dims_by_name( "work" );
+      rcg->line( "outs_to_in_buf_r", "switch(Mt) { " );
+      for( uint32_t Mt = 0; Mt != work.dsz("Mt"); ++Mt ) {
+	rcg->line( "outs_to_in_buf_r", "case "+str(Mt)+":" );
+        for( uint32_t Nt = 0; Nt != work.dsz("Nt"); ++Nt ) {
+          uint32_t const rix = (Mt*work.dsz("Nt")+Nt);
+          rcg->line( "outs_to_in_buf_r", strprintf( "in_buf_r[%s] = out_buf_r[%s];", str(Nt).c_str(), str(rix).c_str() ) );  
+	}
+        rcg->line( "outs_to_in_buf_r", "break;" );
+      }
+      rcg->line( "outs_to_in_buf_r", "} " );
+
+      // note: for this section, there will be a local 'Mt' in scope, used to adjust out_buf_off each iteration
+      for( uint32_t Nt = 0; Nt != work.dsz("Nt"); ++Nt ) {
+	rcg->line( "stores", strprintf( "out_buf[out_buf_off+%s] = in_buf_r[%s];", str(Nt).c_str(), str(Nt).c_str() ) );  
+        
+      }
+    }
+
   };
 
   p_custom_codegen_t make_cnn_custom_codegen_t( void ) { return p_custom_codegen_t( new cnn_custom_codegen_t ); }
