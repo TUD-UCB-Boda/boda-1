@@ -13,12 +13,9 @@ CUCL_GLOBAL_KERNEL void %(rtc_func_name)( GASQ float const * const filts_ref, //
 #endif					  
 {
   // CUCL IX GLOB_ID_1D filts_ref
+  if( GLOB_ID_1D >= %(filts_ref_dims_prod) ) { return; }	
   float val = filts_ref[GLOB_ID_1D];
-  uint32_t filts_ix = %(filts_ref_out_chan_dim)*
-			(%(GLOB_ID_1D_in_chan)*%(filts_ref_in_chan_stride) +
-			 %(GLOB_ID_1D_y)*%(filts_ref_y_stride) +
-			 %(GLOB_ID_1D_x)) +
-		      %(GLOB_ID_1D_out_chan);
+  uint32_t filts_ix = %(filts_ref_out_chan_dim)*(%(GLOB_ID_1D_in_chan)*%(filts_ref_in_chan_stride) + %(GLOB_ID_1D_y)*%(filts_ref_y_stride) + %(GLOB_ID_1D_x)) + %(GLOB_ID_1D_out_chan);
   filts[filts_ix] = val;
 
 }

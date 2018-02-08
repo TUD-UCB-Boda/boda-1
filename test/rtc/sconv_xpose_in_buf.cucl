@@ -28,6 +28,7 @@ CUCL_GLOBAL_KERNEL void %(rtc_func_name)( GASQ float const * const in_buf_ref, /
 #endif					  
 {
   // CUCL IX GLOB_ID_1D work_in
+    if( GLOB_ID_1D >= %(work_in_dims_prod) ) { return; }	
   uint32_t start_x = %(GLOB_ID_1D_xconvs)*%(stride_x_dim);
   uint32_t start_y = %(GLOB_ID_1D_yconvs)*%(stride_y_dim);
   uint32_t in_row_size = %(in_buf_ref_x_dim);
