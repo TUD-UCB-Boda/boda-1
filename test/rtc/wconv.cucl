@@ -238,7 +238,8 @@ CUCL_GLOBAL_KERNEL void %(rtc_func_name) (
                 for (int j = 0; j < 2; ++j) {
                     if (ok < %(out_chan_dim) && valids[i][j]) {
 			rl = M[i][j] + biases[ok];
-                        pO[(i * %(out_x_dim) + j) * %(in_img_dim)] = (rl >= 0) ? rl : 0.f;
+                       // pO[(i * %(out_x_dim) + j) * %(in_img_dim)] = (rl >= 0) ? rl : 0.f;
+                       out[((on*%(out_chan_dim)+(ok_t+8*l)) * %(out_y_dim) + oh + i) * %(out_x_dim) + ow +j] = rl >= 0 ? rl : 0;
                     }
                 }
             }
