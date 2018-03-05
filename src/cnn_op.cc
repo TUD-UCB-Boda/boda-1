@@ -194,8 +194,8 @@ namespace boda
         vect_string{"in_chan","y","x","out_chan"}, op->get_dims("filts").tn )); 
 
       op->reset_dims("out",dims_t( vect_uint32_t{ 
-        out.dsz("chan"), out.dsz("y"), out.dsz("x"), out.dsz("img")}, 
-        vect_string{"chan","y","x","img"}, 
+        out.dsz("img"), out.dsz("chan"), out.dsz("y"), out.dsz("x")}, 
+        vect_string{"img","chan","y","x"}, 
         op->get_dims("out").tn )); 
 	}
         if( (op->get_func_name() == tconv_str) || (op->get_func_name() == k1conv_str) ) { 

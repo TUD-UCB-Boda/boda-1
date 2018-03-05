@@ -6,8 +6,9 @@ CUCL_GLOBAL_KERNEL void %(rtc_func_name) (
     GASQ float const * const in_ref, // CUCL REF img:chan:y:x
     //GASQ float const * const in, // CUCL IN img:chan:y:x
     GASQ void const * const in_pad, // CUCL REF y:x
-    GASQ float * out, // CUCL OUT chan:y:x:img
-    GASQ float * out_ref, // CUCL REF img:chan:y:x
+    //GASQ float * out, // CUCL OUT chan:y:x:img
+    //GASQ float * out_ref, // CUCL REF img:chan:y:x
+    GASQ float * out, // CUCL OUT img:chan:y:x
     GASQ void const * const work // CUCL REF wino_tpb:wino_tp:wino_tq:wino_tk:wino_tn:filts_work:img_work:out_work:pels_blk:out_chan_blk:pels_tile:out_chan_tile:pels:out_chan
 
     ) {
@@ -19,7 +20,7 @@ CUCL_GLOBAL_KERNEL void %(rtc_func_name) (
     int TN = %(win_TN);
     %(superblocking)
     
-    int ii = get_group_id(0); // kann optimiert werden:
+    int ii = get_group_id(0);
     int g0 = ii / (TQ*TK*TN);                                                    
     int g1 = (ii %% (TQ*TK*TN)) / (TK*TN);                                        
     int g2 = (ii %% (TK*TN)) / TN;                                                
@@ -83,7 +84,6 @@ CUCL_GLOBAL_KERNEL void %(rtc_func_name) (
             vt[2][1] = v[2][1] - v[1][1];
             vt[2][2] = v[2][2] - v[1][2];
             vt[2][3] = v[2][3] - v[1][3];
-            // Different order to prevent register conflicts?
 
             v[0][0] = vt[0][0] - vt[0][2];
             v[0][3] = vt[0][1] - vt[0][3];

@@ -28,7 +28,7 @@ namespace boda
     uint32_t tconv; //NESI(default=0,help="if 1, enable tconv variant (cnn operations only). if 2, (force-)enable tconv in more cases.")
     u32_pt_t tconv_max_ksz;  //NESI(default="11:11",help="max kernel size to use for tconv")
     uint32_t ipconv; //NESI(default=0,help="if 1, enable ipconv variant (cnn operations only)")
-    uint32_t wconv;
+    uint32_t wconv; //NESI(default=0,help="if 1, enable winograd variant (cnn operations only)")
 
   };
   typedef vector< op_tune_t > vect_op_tune_t; 
