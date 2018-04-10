@@ -315,8 +315,8 @@ namespace boda
       // note: as this point: oi->get_dims("in") may not == rtc->get_var_dims( in_id ); see comment in init()
       if( oi->get_func_name() == tconv_str ) {
 	// assume input needs the below xform and apply it. FIXME(?): fails if vars are in unexpected formats.
-	oi->reset_arg( "in", gen_apply_func_to_var( "in_ref", oi->get_arg("in"), "in", oi->get_dims("in"),
-                                                    "tconv_xpose_in", oi ) );
+	oi->reset_arg( "in_buf", gen_apply_func_to_var( "in_buf_ref", oi->get_arg("in_buf"), "in_buf", oi->get_dims("in_buf"),
+                                                    "tconv_xpose_in_buf", oi ) );
       } else if( oi->get_func_name() == k1conv_str ) {
 	if( oi->get_dims("in") != rtc->get_var_dims( in_id ) ) {
 	  // if dims not exactly right, assume they are 'normal' dims and convert. FIXME(?): fails if vars are in unexpected formats.

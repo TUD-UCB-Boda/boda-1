@@ -63,6 +63,7 @@ LDFLAGS := $(LDFLAGS) -lnvrtc
 [opencl]
 LDFLAGS := $(LDFLAGS) -lOpenCL
 
+
 [vulkan] # XXX make this work in general
 VULKAN_SDK_PATH:=/home/multicore/vulkan/VulkanSDK/1.1.70.1/x86_64
 CPPFLAGS := $(CPPFLAGS) -I$(VULKAN_SDK_PATH)/include/vulkan -I$(VULKAN_SDK_PATH)/include/libshaderc
