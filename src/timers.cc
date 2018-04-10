@@ -4,6 +4,7 @@
 #include"str_util.H"
 #include<algorithm>
 #include<time.h>
+#include<cerrno>
 // NOTE: we use pre-2.0 sparsehash include path for compatiblity with
 // ubuntu 14.04 (which ships sparsehash 1.10) for now, but this should
 // eventually become <sparsehash/dense_hash_map>.

@@ -11,10 +11,10 @@
 [base] # special basic setup / global dependencies; always enabled, will always be emmited first in dependencies.make
 VPATH := $(VPATH) ../src ../src/ext
 CPP := g++
-CPPFLAGS := -fuse-ld=gold -Wall -O3 -g -std=c++0x -rdynamic -fPIC -fopenmp -Wall -I. # -I. is so files in gen/* can be included ... not ideal?
+CPPFLAGS := -fuse-ld=gold -Wall -O3 -std=c++0x -rdynamic -fPIC -fopenmp -Wall -I. # -I. is so files in gen/* can be included ... not ideal?
 LDFLAGS := -lboost_system -lboost_filesystem -lboost_iostreams -lboost_regex -lboost_program_options 
 
-[lmdb]
+[lmdb disable]
 # assume system defaults include needed include/lib dirs
 LDFLAGS := $(LDFLAGS) -llmdb
 
@@ -26,7 +26,7 @@ LDFLAGS := $(LDFLAGS) -loctave -loctinterp
 CPPFLAGS := $(CPPFLAGS) -I/usr/include/SDL2 -I/usr/local/include/SDL2
 LDFLAGS := $(LDFLAGS) -lSDL2 -lSDL2_ttf -lrt
 
-[OSMesa]
+[OSMesa disable]
 LDFLAGS := $(LDFLAGS) -lOSMesa -lm -lGLU -lGLEW
 
 [protobuf]
@@ -60,16 +60,15 @@ LDFLAGS := $(LDFLAGS) -lcublas -lcudnn
 [nvrtc disable] #needs=cuda]
 LDFLAGS := $(LDFLAGS) -lnvrtc
 
-[opencl disable]
+[opencl]
 LDFLAGS := $(LDFLAGS) -lOpenCL
 
 [vulkan] # XXX make this work in general
-VULKAN_SDK_PATH:=/home/jschulte/vulkan/VulkanSDK/1.0.49.0/x86_64
-SHADERC_PATH:= /home/jschulte/vulkan_backend/shaderc
-CPPFLAGS := $(CPPFLAGS) -I$(VULKAN_SDK_PATH)/include/vulkan -I$(SHADERC_PATH)/libshaderc/include
-LDFLAGS := $(LDFLAGS) -L$(VULKAN_SDK_PATH)/lib -lvulkan -L$(SHADERC_PATH)/build/libshaderc -l:libshaderc_combined.a
+VULKAN_SDK_PATH:=/home/multicore/vulkan/VulkanSDK/1.1.70.1/x86_64
+CPPFLAGS := $(CPPFLAGS) -I$(VULKAN_SDK_PATH)/include/vulkan -I$(VULKAN_SDK_PATH)/include/libshaderc
+LDFLAGS := $(LDFLAGS) -L$(VULKAN_SDK_PATH)/lib -lvulkan  -L$(VULKAN_SDK_PATH)/lib/libshaderc -l:libshaderc_combined.a
 
-[caffe needs=cuda needs=caffe_pb]
+[caffe needs=cuda needs=caffe_pb disable]
 CAFFE_HOME := /mnt/nfs/home/moskewcz/git-work/caffe
 CAFFE_LIB := $(CAFFE_HOME)/build/lib
 CPPFLAGS := $(CPPFLAGS) -I$(CAFFE_HOME)/include -I$(CAFFE_HOME)/build/include -I$(CAFFE_HOME)/build/src
@@ -81,21 +80,21 @@ ifneq ($(shell diff -wq ../src/ext/caffe.proto ${CAFFE_HOME}/src/caffe/proto/caf
 $(error "building with caffe support, but diff of boda copy of caffe.proto with caffe version failed (because the content diffed, a file was not found, etc). run diff manually for details and/or update boda version of caffe.proto. aborting make.")
 endif
 
-[python]
+[python disable]
 CPPFLAGS := $(CPPFLAGS) -I/usr/include/python2.7 
 LDFLAGS := $(LDFLAGS) -lpython2.7
 
-[turbojpeg] # disable-able, but will cause any test/mode that tries to load a .jpeg to fail at run-time
+[turbojpeg disable] # disable-able, but will cause any test/mode that tries to load a .jpeg to fail at run-time
 LDFLAGS := $(LDFLAGS) -lturbojpeg
 
-[FFmpeg]
+[FFmpeg disable]
 LDFLAGS := $(LDFLAGS) -lavcodec -lavformat -lavutil
 
-[RoS]
+[RoS disable]
 LDFLAGS := $(LDFLAGS) -lcpp_common -lrosconsole -lrosconsole_print -lrosconsole_backend_interface -lconsole_bridge -ltopic_tools -lroscpp -lrosbag -lrosbag_storage -lrostime -lroscpp_serialization # others? sigh. not too obvious what the full/right set is.
 
 
-[stacktrace_gnu] # if enabled, get stacktrace using gnu extentions backtrace() and backtrace_symbols() 
+[stacktrace_gnu disable] # if enabled, get stacktrace using gnu extentions backtrace() and backtrace_symbols() 
 
 # list of object files to compile. at least the objects that are direct dependencies of the above sections should be
 # marked by adding the dependency section name after the object file below. thus, if the dependency is disabled, the
@@ -106,17 +105,17 @@ LDFLAGS := $(LDFLAGS) -lcpp_common -lrosconsole -lrosconsole_print -lrosconsole_
 # particular dependency. note that some dependencies may not usefully be disable-able.
 
 [objs]
-data-stream-rosbag.o RoS
-data-stream-ffmpeg.o FFmpeg
+#data-stream-rosbag.o RoS
+#data-stream-ffmpeg.o FFmpeg
 os-render.o OSMesa
 shader.o OSMesa
-data-stream-velo.o
-data-stream-pcap.o
-data-stream-mxnet.o
+#data-stream-velo.o
+#data-stream-pcap.o
+#data-stream-mxnet.o
 data-stream-file.o
-data-to-img.o
+#data-to-img.o
 data-stream.o
-raw-vid-disp.o
+#raw-vid-disp.o
 op-tuner.o
 cnn_op.o
 culibs-wrap.o culibs
@@ -129,7 +128,7 @@ op_base.o
 rtc_prof.o
 cnn_codegen.o
 rtc_func_gen.o
-rtc_ipc.o
+#rtc_ipc.o
 rtc_fwd.o
 rtc_compute.o
 ocl_util.o opencl
@@ -159,7 +158,7 @@ asio_util.o
 disp_app.o SDL2
 cap_app.o SDL2 caffe_pb
 caffeif.o caffe_pb 
-cap_util.o
+#cap_util.o
 disp_util.o SDL2
 conv_pyra.o SDL2 caffe_pb
 conv_util.o

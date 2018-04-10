@@ -1,6 +1,6 @@
 #define LRN_MATCH_CAFFE
 #ifdef GLSL
-layout (local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+layout (local_size_x = __wg_sz__, local_size_y = 1, local_size_z = 1) in;
 layout(set = 0, binding = 0) readonly buffer in_buf_t{
   float in_buf[];
 };

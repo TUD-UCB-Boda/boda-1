@@ -1,95 +1,125 @@
 # note: editing this file is similar to editing the makefile.  in particular (like after editing the makefile), after
 # editing this file, currently built objects might differ or fail to build after a make clean. however, in many cases,
 # this may be acceptable / ignorable ... user beware.
-
+ 
 # adjust paths below as needed. note that if no special paths are needed for a feature (i.e. it is present in the system
 # include/library paths), one need not specify them here. in the limit, for system-wide header-only libraries, a
 # dependency section may be empty. however, it will still function in order to disable particular object files from
 # being built if desired. note: the results of processing this file will be written to the file: dependencies.make
-
+ 
 [base] # special basic setup / global dependencies; always enabled, will always be emmited first in dependencies.make
-CPP := /scratch/android-stc/bin/aarch64-linux-android-g++ 
-CPPFLAGS := -Wall -O3 -g -std=c++0x -rdynamic -fPIC -fopenmp -Wall -I. # -I. is so files in gen/* can be included ... not ideal?
-CPPFLAGS := ${CPPFLAGS} -fPIE -pie -isystem /scratch/moskewcz/android/src/boost_1_60_0 -isystem /scratch/moskewcz/android/src/sparsehash-sparsehash-2.0.3/src # android specific
-
-SYSROOT := /scratch/moskewcz/android/sysroot_msm8996
+VPATH := $(VPATH) ../src ../src/ext
+CPP :=  /home/multicore/Desktop/android-ndk-r16b/build/tools/my-android-toolchain/bin/aarch64-linux-android-g++
+CPPFLAGS := -fuse-ld=gold -Wall -O3 -g -std=c++0x -rdynamic -fPIC -fopenmp -Wall -I. # -I. is so files in gen/* can be included ... not ideal?
+CPPFLAGS := ${CPPFLAGS} -fPIE -pie -isystem /home/multicore/Desktop/boost_1_60_0 -isystem /home/multicore/Desktop/sparsehash-sparsehash-2.0.3/src # android specific
+ 
+ 
+SYSROOT := /home/multicore/Desktop/hikey_sysroot
 #SYSROOT := /scratch/moskewcz/android/sysroot_msm8994
 LDFLAGS := -fopenmp -fPIE -pie \
-	-L${SYSROOT}/system/lib64 -Wl,-rpath-link,${SYSROOT}/system/lib64 \
-	-L${SYSROOT}/system/vendor/lib64 -Wl,-rpath-link,${SYSROOT}/system/vendor/lib64 \
-	-lgnustl_shared \
-	-L/scratch/moskewcz/android/src/boost_1_60_0/stage/lib \
-	-lboost_system -lboost_filesystem -lboost_iostreams -lboost_regex -lboost_program_options \
-	# ---- end of LDFLAGS (note: continued from above line, so keep this line here/last) ---- 
-
+    -L${SYSROOT}/lib64 -Wl,-rpath-link,${SYSROOT}/lib64 \
+    -L${SYSROOT}/vendor/lib64 -Wl,-rpath-link,${SYSROOT}/vendor/lib64 \
+    -lgnustl_shared \
+    -L/home/multicore/Desktop/boost_1_60_0/stage/lib \
+    -lboost_system -lboost_filesystem -lboost_iostreams -lboost_regex -lboost_program_options \
+    # ---- end of LDFLAGS (note: continued from above line, so keep this line here/last) ----
+ 
 [lmdb disable]
 # assume system defaults include needed include/lib dirs
 LDFLAGS := $(LDFLAGS) -llmdb
-
+ 
 [octave disable]
 CPPFLAGS := $(CPPFLAGS) -I/usr/include/octave-4.0.0 -I/usr/include/octave-4.0.0/octave
 LDFLAGS := $(LDFLAGS) -loctave -loctinterp
-
+ 
 [SDL2 disable]
 CPPFLAGS := $(CPPFLAGS) -I/usr/include/SDL2 -I/usr/local/include/SDL2
 LDFLAGS := $(LDFLAGS) -lSDL2 -lSDL2_ttf -lrt
-
-[caffe_pb gen_fn=caffe.pb.cc gen_fn=caffe.pb.h]
-CPPFLAGS := $(CPPFLAGS) -isystem /scratch/moskewcz/android/src/protobuf-2.6.1/src
-LDFLAGS := $(LDFLAGS) -L/scratch/moskewcz/android/src/protobuf-2.6.1/src/.libs -lprotobuf
+ 
+[OSMesa disable]
+LDFLAGS := $(LDFLAGS) -lOSMesa -lm -lGLU -lGLEW
+ 
+[protobuf]
+CPPFLAGS := $(CPPFLAGS) -isystem /home/multicore/Desktop/protobuf_android/protobuf-2.6.1/src
+LDFLAGS := $(LDFLAGS) -L/home/multicore/Desktop/protobuf_android/protobuf-2.6.1/src/.libs -lprotobuf
+ifndef PROTOC
+  PROTOC := protoc
+endif
+ 
+[caffe_pb gen_fn=caffe.pb.cc gen_fn=caffe.pb.h needs=protobuf]
 # manually add deps since we can create this particular header (which is unusual and otherwise unhandled by the header
 # deps system.
-caffepb.o : caffe.pb.h 
-upgrade_proto.o : caffe.pb.h 
+caffepb.o : caffe.pb.h
+upgrade_proto.o : caffe.pb.h
 # note: it may be possible to not rebuild caffe.pb.h / caffe.pb.cc in some cases
-caffe.pb.cc caffe.pb.h : ../src/ext/caffe.proto 
-	/home/moskewcz/src/protobuf-2.6.1/src/protoc -I../src/ext --cpp_out=. ../src/ext/caffe.proto
-
-
+caffe.pb.cc caffe.pb.h : ../src/ext/caffe.proto
+	/home/multicore/Desktop/protobuf_host/protobuf-2.6.1/src/protoc -I../src/ext --cpp_out=. ../src/ext/caffe.proto
+ 
+ 
 [cuda disable]
 CUDA_HOME := /usr/local/cuda
 CPPFLAGS := $(CPPFLAGS) -I$(CUDA_HOME)/include
 CUDA_LIB = $(CUDA_HOME)/lib64
-LDFLAGS := $(LDFLAGS) -L$(CUDA_LIB) -lcudart -lcublas -lcurand -lcuda
+LDFLAGS := $(LDFLAGS) -L$(CUDA_LIB) -lcudart -lcurand -lcuda
 # we choose to rpath the CUDA library dir here, since it is not commonly in the system library path. this is optional;
 # if you prefer to use LD_LIBRARY_PATH or other methods, comment out the following line:
 LDFLAGS := $(LDFLAGS) -Wl,-rpath,$(CUDA_LIB)
-
+ 
+[culibs needs=cuda disable]
+LDFLAGS := $(LDFLAGS) -lcublas -lcudnn
+ 
 [nvrtc needs=cuda disable]
 LDFLAGS := $(LDFLAGS) -lnvrtc
-
+ 
 [opencl]
-CPPFLAGS := $(CPPFLAGS) -I/scratch/moskewcz/android/adreno/include 
+CPPFLAGS := $(CPPFLAGS) -I/home/multicore/Desktop/OpenCL-Headers-master/opencl20/
 LDFLAGS := $(LDFLAGS) -lOpenCL
 
+[vulkan] # XXX make this work in general
+VULKAN_SDK_PATH:=/home/multicore/vulkan/VulkanSDK/1.1.70.1/x86_64
+SHADERC_PATH=/home/multicore/Desktop/android-ndk-r16b/sources/third_party/shaderc
+CPPFLAGS := $(CPPFLAGS) -I$(VULKAN_SDK_PATH)/include/vulkan -I$(SHADERC_PATH)/include/shaderc/
+LDFLAGS := $(LDFLAGS)  -l:vulkan.hikey960.so -L$(SHADERC_PATH)/libs/gnustl_shared/arm64-v8a/ -lshaderc 
+ 
 [caffe needs=cuda needs=caffe_pb disable]
-CAFFE_HOME := /home/moskewcz/git_work/caffe_dev
+CAFFE_HOME := /mnt/nfs/home/moskewcz/git-work/caffe
 CAFFE_LIB := $(CAFFE_HOME)/build/lib
-CPPFLAGS := $(CPPFLAGS) -I$(CAFFE_HOME)/include -I$(CAFFE_HOME)/build/src
-LDFLAGS := $(LDFLAGS) -L$(CAFFE_LIB) -lcaffe -lglog -ldl 
+CPPFLAGS := $(CPPFLAGS) -I$(CAFFE_HOME)/include -I$(CAFFE_HOME)/build/include -I$(CAFFE_HOME)/build/src
+LDFLAGS := $(LDFLAGS) -L$(CAFFE_LIB) -lcaffe -lglog -ldl
 # we choose to rpath the caffe library dir here, since it is not commonly in the system library path. this is optional;
 # if you prefer to use LD_LIBRARY_PATH or other methods, comment out the following line:
 LDFLAGS := $(LDFLAGS) -Wl,-rpath,$(CAFFE_LIB)
 ifneq ($(shell diff -wq ../src/ext/caffe.proto ${CAFFE_HOME}/src/caffe/proto/caffe.proto ; echo $$? ),0)
 $(error "building with caffe support, but diff of boda copy of caffe.proto with caffe version failed (because the content diffed, a file was not found, etc). run diff manually for details and/or update boda version of caffe.proto. aborting make.")
 endif
-
+ 
 [python disable]
-CPPFLAGS := $(CPPFLAGS) -I/usr/include/python2.7 
+CPPFLAGS := $(CPPFLAGS) -I/usr/include/python2.7
 LDFLAGS := $(LDFLAGS) -lpython2.7
-
-[turbojpeg] # disable-able, but will cause any test/mode that tries to load a .jpeg to fail at run-time
-CPPFLAGS := $(CPPFLAGS) -I/scratch/moskewcz/android/src/libjpeg-turbo-1.4.90
-LDFLAGS := $(LDFLAGS) -L/scratch/moskewcz/android/src/libjpeg-turbo-1.4.90/.libs -lturbojpeg
-
-[stacktrace_gnu disable] # if enabled, get stacktrace using gnu extentions backtrace() and backtrace_symbols() 
-
-[qblas disable]
-CPPFLAGS := $(CPPFLAGS) -I/scratch/moskewcz/android/qsml/QSML-0.14.0/ilp64/aarch64-linux-android/include
-LDFLAGS := $(LDFLAGS) -L/scratch/moskewcz/android/qsml/QSML-0.14.0/ilp64/aarch64-linux-android/lib -lQSML-0.14.0 -Wl,-rpath-link,/scratch/moskewcz/android/qsml/Symphony-1.0.0/aarch64-linux-android/lib
-
-
-
+ 
+[turbojpeg disable] # disable-able, but will cause any test/mode that tries to load a .jpeg to fail at run-time
+CPPFLAGS := $(CPPFLAGS) -I/home/multicore/Desktop/libjpeg-turbo-1.4.90
+LDFLAGS := $(LDFLAGS) -L/home/multicore/Desktop/libjpeg-turbo-1.4.90/.libs -lturbojpeg
+ 
+[FFmpeg disable]
+LDFLAGS := $(LDFLAGS) -lavcodec -lavformat -lavutil -lswscale
+ 
+[eigen disable]
+CPPFLAGS := $(CPPFLAGS) -I/usr/include/eigen3
+ 
+[kdl disable]
+LDFLAGS := $(LDFLAGS) -lorocos-kdl
+ 
+ 
+[RoS needs=eigen needs=kdl disable]
+# note: when added, the eigen dep was only for tf2 transform include for transforming PointCloud2 msgs
+# note2: when added, the kdl dep was only for tf2 transform include for transforming PoseStamped msgs
+# note3: why yes, that does mean ros needs 2+ external geometry libraries for doing (ineffecient) transforms on basic types!
+LDFLAGS := $(LDFLAGS) -lcpp_common -lrosconsole -lrosconsole_print -lrosconsole_backend_interface -lconsole_bridge -ltopic_tools -lroscpp -lrosbag -lrosbag_storage -ltf2 -lrostime -lroscpp_serialization # others? sigh. not too obvious what the full/right set is.
+ 
+ 
+[stacktrace_gnu disable] # if enabled, get stacktrace using gnu extentions backtrace() and backtrace_symbols()
+ 
 # list of object files to compile. at least the objects that are direct dependencies of the above sections should be
 # marked by adding the dependency section name after the object file below. thus, if the dependency is disabled, the
 # code should compile -- but perhaps not like. for some dependencies, we also mark all indirect dependencies (FIXME:
@@ -97,11 +127,26 @@ LDFLAGS := $(LDFLAGS) -L/scratch/moskewcz/android/qsml/QSML-0.14.0/ilp64/aarch64
 # link a reduced-functionality executable. since most of the time a particular set of dependencies is enabled/disabled,
 # and the the dependency tracking here is manual, it may go stale and need to be updated when trying to disable a
 # particular dependency. note that some dependencies may not usefully be disable-able.
-
+ 
 [objs]
+#data-stream-img-util.o
+#data-stream-stream.o
+#stream_util.o
+data-stream-rosbag.o RoS
+data-stream-ffmpeg.o FFmpeg
+os-render.o OSMesa
+shader.o OSMesa
+#data-stream-velo.o
+#data-stream-pcap.o
+#data-stream-mxnet.o
+#data-stream-file.o
+#data-to-img.o
+#data-stream.o
+raw-vid-disp.o SDL2
 op-tuner.o
 cnn_op.o
-qblas-test.o qblas
+culibs-wrap.o culibs
+culibs-wrap-stub.o -culibs
 comp_util.o
 cnn-prof.o
 stacktrace_util_gnu.o stacktrace_gnu
@@ -110,27 +155,28 @@ op_base.o
 rtc_prof.o
 cnn_codegen.o
 rtc_func_gen.o
-rtc_ipc.o
+#rtc_ipc.o
 rtc_fwd.o
 rtc_compute.o
 ocl_util.o opencl
+vk_util.o vulkan
 caffe_fwd.o caffe_pb caffe
 has_conv_fwd.o
 nvrtc_util.o nvrtc
 lmdb_caffe_disp.o caffe_pb lmdb SDL2
 lmdb_caffe_io.o caffe_pb lmdb
-
+ 
 # our modified version of the upgrade net func. we (questionably) use it even when compiling with full caffe support.
 upgrade_proto.o caffe_pb
-
+ 
 # we don't need/want our copy of the caffe protobuf wrapper code if we're compiling caffe, so we mark it -caffe.  FIXME:
 # we should really also the caffe version of the protobuf header when we're compiling with full caffe support, but that
 # seems tricky to do. we settle for checking if our version of caffe.proto is the same as the caffe version.
-caffe.pb.o caffe_pb -caffe 
-
+caffe.pb.o caffe_pb -caffe
+ 
 # caffe-related functionality that only needs the caffe protobuf headers (and generated code).
 caffepb.o caffe_pb
-
+ 
 lmdbif.o lmdb
 test_compute.o caffe_pb
 test_dense.o caffe_pb
@@ -138,8 +184,8 @@ conv_common.o
 asio_util.o
 disp_app.o SDL2
 cap_app.o SDL2 caffe_pb
-caffeif.o caffe_pb 
-cap_util.o
+caffeif.o caffe_pb
+#cap_util.o
 disp_util.o SDL2
 conv_pyra.o SDL2 caffe_pb
 conv_util.o
@@ -149,11 +195,11 @@ test_all.o
 bb_tests.o
 xml_util.o
 timers.o
-test_nesi.o
+test_nesi.o caffe_pb
 has_main.o
 nesi.o
-lexp.o 
-img_io.o 
+lexp.o
+img_io.o
 img_io-turbojpeg.o turbojpeg
 img_io-no-turbojpeg-stub.o -turbojpeg
 model.o octave
@@ -162,10 +208,10 @@ pyif.o python
 pyif-no-python-stub.o -python
 octif.o octave
 octif-no-octave-stub.o -octave
-str_util.o 
+str_util.o
 geom_prim.o
-boda_base.o 
+boda_base.o
 pugixml.o
-lodepng.o 
+lodepng.o
 boda_help.o
 boda.o

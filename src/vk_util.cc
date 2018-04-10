@@ -4,20 +4,29 @@
 #include "timers.H"
 #include "vulkan.h"
 #include <iostream>
-#include <shaderc/shaderc.hpp>
+#include <shaderc.hpp>
 #include <stdlib.h>
 #include <list>
+#include <sstream>
 
 //#define DEBUG
 //#define DIRECT_GLSL
 //#define CLSPV
-#define MAX_KERNELS_PER_BUFFER 1
+#define MAX_KERNELS_PER_BUFFER 8
 
 namespace boda {
   // XXX improve/implement error handling
 #define BAIL_ON_BAD_RESULT(result) \
   if (VK_SUCCESS != (result)) { fprintf(stderr, "Failure at %u %s\n", __LINE__, __FILE__); exit(-1); }
 
+
+  template <typename T>
+  std::string to_string(T value)
+  {
+      std::ostringstream os ;
+      os << value ;
+      return os.str() ;
+  }
 
   string vk_base_decls = R"rstr(
 #version 450
@@ -45,7 +54,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 #define LOCSHAR_MEM
 #define LSMASQ
 // XXX check whether we need both barriers
-#define BARRIER_SYNC groupMemoryBarrier(); barrier();
+#define BARRIER_SYNC barrier();
 
 // note: it seems GLSL doesn't provide powf(), but instead overloads pow() for double and float.
 // so, we use this as a compatibility wrapper.
@@ -157,7 +166,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	0,
 	"",
 	0,
-	VK_MAKE_VERSION(1, 0, 61) // XXX check
+	VK_MAKE_VERSION(1, 0, 9) // XXX check
       };
 
       vector<const char*> layers;
@@ -180,6 +189,8 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       };
 
       BAIL_ON_BAD_RESULT(vkCreateInstance(&instance_create_info, 0, &instance));
+      //printf("%d", vkCreateInstance(&instance_create_info, 0, &instance));
+ //return 1;
 
 #ifdef DEBUG
       const VkDebugReportCallbackCreateInfoEXT debug_callback_create_info = {
@@ -338,15 +349,15 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       p_ostream out = ofs_open( strprintf( "%s/%s_%d.cl", gen_src_output_dir.exp.c_str(), func_name.c_str(), pos));
       (*out) << src << std::flush;
       system(("/home/jschulte/vulkan_backend/clspv_/build/bin/clspv -cluster-pod-kernel-args " +
-	      gen_src_output_dir.exp + "/" + func_name + "_" + std::to_string(pos) + ".cl -o " +
-	      gen_src_output_dir.exp + "/" + func_name + "_" + std::to_string(pos) + ".spv").c_str());
+	      gen_src_output_dir.exp + "/" + func_name + "_" + to_string(pos) + ".cl -o " +
+	      gen_src_output_dir.exp + "/" + func_name + "_" + to_string(pos) + ".spv").c_str());
 
       system(("/home/jschulte/vulkan/VulkanSDK/1.0.61.1/x86_64/bin/spirv-opt --inline-entry-points-exhaustive --merge-blocks --eliminate-dead-branches --eliminate-dead-code-aggressive " +
-	      gen_src_output_dir.exp + "/" + func_name + "_" + std::to_string(pos) + ".spv -o " +
-	      gen_src_output_dir.exp + "/" + func_name + "_" + std::to_string(pos) + "_opt.spv").c_str());
+	      gen_src_output_dir.exp + "/" + func_name + "_" + to_string(pos) + ".spv -o " +
+	      gen_src_output_dir.exp + "/" + func_name + "_" + to_string(pos) + "_opt.spv").c_str());
       
       std::ifstream is;
-      is.open(gen_src_output_dir.exp + "/" + func_name + "_" + std::to_string(pos) + "_opt.spv", std::ios::binary);
+      is.open(gen_src_output_dir.exp + "/" + func_name + "_" + to_string(pos) + "_opt.spv", std::ios::binary);
       is.seekg(0, std::ios::end);
       size_t size = is.tellg();
       is.seekg(0, std::ios::beg);
@@ -388,6 +399,9 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	  (*out) << src << std::flush;
 	}
 	#endif
+	size_t const loc_work_sz = i->tpb;
+	size_t wg_sz_pos = src.find("__wg_sz__");
+	src.replace(wg_sz_pos, std::string("__wg_sz__").length(), to_string(loc_work_sz));	
 	#ifdef CLSPV
 	VkShaderModule shader_module;
 	if (fallback)
@@ -463,7 +477,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	VkPipelineLayout pipeline_layout;
         BAIL_ON_BAD_RESULT(vkCreatePipelineLayout(device, &pipeline_layout_create_info, 0, &pipeline_layout));
 	
-	size_t const loc_work_sz = i->tpb;
+
 	const VkSpecializationMapEntry entries[] =
 	// id,  offset,                size
 	  {{0, 0, sizeof(size_t)}};
@@ -490,7 +504,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
 	    #else
 	    "main",
 	    #endif
-	    &spec_info
+	    0//&spec_info
 	  },
 	  pipeline_layout,
 	  0,
@@ -846,7 +860,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       };
       timer_t t("vk kernel");
       BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submit_info, current_command_buffer->fence));
-      BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
+      //BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
       t.stop();
       current_command_buffer = nullptr;
       if (kernels_per_buffer < MAX_KERNELS_PER_BUFFER)
@@ -1017,9 +1031,9 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       
       vkCmdWriteTimestamp(current_command_buffer->vk_cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
 			  call_evs[call_id], 1);
-      timer_t t(rfc.rtc_func_name);
+      //timer_t t(rfc.rtc_func_name);
       submit_command(false);
-      t.stop();
+      //t.stop();
       return call_id;
     }
 

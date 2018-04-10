@@ -43,14 +43,14 @@ namespace boda
     check_tj_ret( !tj_enc, "tjInitCompress" ); // note: !tj_dec passed as tj_ret, since 0 is the fail val for tj_dec
     int const quality = 90;
     uint32_t const tj_pixel_format = TJPF_RGBA;
-    ulong tj_size_out = 0;
+    long tj_size_out = 0;
     uint8_t * tj_buf_out = 0;
     if( !yuv_pels.empty() ) { // if yuv data present, use it instead of pels
       assert_st( yuv_pels.size() == 3 );
       vect_rp_uint8_t yuv_data;
       // NOTE: we don't (re-)check the dims of the plane ndas here.
       for( uint32_t pix = 0; pix != 3; ++pix ) { yuv_data.push_back( yuv_pels[pix].get() ); }
-      tj_ret = tjCompressFromYUVPlanes( tj_enc, &yuv_data[0], sz.d[0], NULL, sz.d[1], TJSAMP_420,
+      tj_ret = tjCompressFromYUVPlanes( tj_enc, (const unsigned char**) &yuv_data[0], sz.d[0], NULL, sz.d[1], TJSAMP_420,
                                         &tj_buf_out, &tj_size_out, quality, 0 );
     } else {
       tj_ret = tjCompress2( tj_enc, pels.get(), sz.d[0], row_pitch, sz.d[1], tj_pixel_format, &tj_buf_out, &tj_size_out, TJSAMP_444, quality, 0 );

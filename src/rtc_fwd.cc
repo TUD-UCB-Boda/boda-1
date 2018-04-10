@@ -48,7 +48,7 @@ namespace boda
     rtc_compile_opts_t compile_opts; // NESI(default="()",help="runtime compilation options")
     uint32_t enable_stats; //NESI(default=0,help="if 1, dump stats")
     uint32_t enable_prof; //NESI(default=1,help="if 1, enable profiling")
-    uint32_t enable_double_run; //NESI(default=0,help="if 1, run ops an extra time before the timed run (doubles run time, might improve timing quality/repeatability).")
+    uint32_t enable_double_run; //NESI(default=1,help="if 1, run ops an extra time before the timed run (doubles run time, might improve timing quality/repeatability).")
     string per_call_fn; //NESI(default="",help="if non-empty, write per-call profiling (timing via events) to given file.")
     vect_p_quantize_ops_t quantize; //NESI(help="per-layer quantize options")
 
