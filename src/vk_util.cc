@@ -4,14 +4,14 @@
 #include "timers.H"
 #include "vulkan.h"
 #include <iostream>
-#include <shaderc/shaderc.hpp>
+#include <shaderc.hpp>
 #include <stdlib.h>
 #include <list>
 
 //#define DEBUG
 //#define DIRECT_GLSL
 //#define CLSPV
-#define MAX_KERNELS_PER_BUFFER 1
+#define MAX_KERNELS_PER_BUFFER 8
 
 namespace boda {
   // XXX improve/implement error handling
@@ -846,7 +846,7 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       };
       timer_t t("vk kernel");
       BAIL_ON_BAD_RESULT(vkQueueSubmit(queue, 1, &submit_info, current_command_buffer->fence));
-      BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
+      //BAIL_ON_BAD_RESULT(vkQueueWaitIdle(queue));
       t.stop();
       current_command_buffer = nullptr;
       if (kernels_per_buffer < MAX_KERNELS_PER_BUFFER)
@@ -1017,9 +1017,9 @@ const float FLT_MIN = 1.175494350822287507969e-38f;
       
       vkCmdWriteTimestamp(current_command_buffer->vk_cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
 			  call_evs[call_id], 1);
-      timer_t t(rfc.rtc_func_name);
+      //timer_t t(rfc.rtc_func_name);
       submit_command(false);
-      t.stop();
+      //t.stop();
       return call_id;
     }
 

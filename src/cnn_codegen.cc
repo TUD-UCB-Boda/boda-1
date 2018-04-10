@@ -135,7 +135,7 @@ namespace boda
       }
     }
     
-    void gen_filts_smem_loads( rtc_call_gen_t * rcg, uint32_t const filts_smem_sz ) { // note: filts_smem_sz must == tvv %(filts_smem_sz)
+    void gen_filts_smem_loads( rtc_call_gen_t * rcg, uint32_t const filts_smem_sz, string array_name_and_offset ) { // note: filts_smem_sz must == tvv %(filts_smem_sz)
       uint32_t const out_chan_smem_load_iter = u32_ceil_div( filts_smem_sz, rcg->rtc_call_geom.tpb );    
       for( uint32_t i = 0; i != out_chan_smem_load_iter; ++i ) {
 	string const ixe = "(LOC_ID_1D + %(tpb) * "+str(i)+")";
@@ -143,7 +143,7 @@ namespace boda
 	if( (i+1)*rcg->rtc_call_geom.tpb > filts_smem_sz ) { 
 	  rcg->line( "filts_smem_loads", "if( "+ixe+" < %(filts_smem_sz) ) {" );eif = "}";}
 	// note: load is (always) contiguous
-	rcg->line( "filts_smem_loads", strprintf("filts_smem[%s] = filts[filts_off+(%%(tpb)*%s)];%s",ixe.c_str(),str(i).c_str(),eif.c_str()) );
+	rcg->line( "filts_smem_loads", strprintf("%s %s] = filts[filts_off+(%%(tpb)*%s)];%s",array_name_and_offset.c_str(), ixe.c_str(),str(i).c_str(),eif.c_str()) );
       }
       // number of out chans per block; note: == work_out_chan_tile_dim*work_out_chan_dim
       uint32_t const filts_x_stride = rcg->get_arg_dims_by_name("filts").dstride("x"); 
@@ -158,7 +158,7 @@ namespace boda
 	if( (i+1)*rcg->rtc_call_geom.tpb > filts_x_stride ) { 
 	  rcg->line( "biases_smem_loads", "if( "+ixe+" < %(filts_x_stride) ) {" );eif = "}";}
 	// note: load is (always) contiguous
-	rcg->line( "biases_smem_loads", strprintf("if( ocix < %%(biases_out_chan_dim) ) {filts_smem[%s] = biases[ocix];}%s",ixe.c_str(),eif.c_str()) );
+	rcg->line( "biases_smem_loads", strprintf("if( ocix < %%(biases_out_chan_dim) ) { %s %s] = biases[ocix];}%s",array_name_and_offset.c_str(), ixe.c_str(),eif.c_str()) );
       }
 
     }
@@ -168,7 +168,7 @@ namespace boda
       dims_t const & filts = rcg->get_arg_dims_by_name( "filts" );
       uint32_t const filts_smem_sz = filts.dstride("x");
       rcg->set( "filts_smem_sz", str(filts_smem_sz) );
-      gen_filts_smem_loads( rcg, filts_smem_sz );
+      gen_filts_smem_loads( rcg, filts_smem_sz, "filts_smem[" );
 
       uint32_t const pel_smem_load_iter = u32_ceil_div( (work.dsz( "pels" ) * work.dsz( "pels_tile" )), rcg->rtc_call_geom.tpb );
       rcg->set( "pel_smem_load_iter", str(pel_smem_load_iter) );
@@ -656,7 +656,7 @@ namespace boda
       rcg->set( "all_smem_sz", str(all_smem_sz) );
 
       // generate smem loads
-      gen_filts_smem_loads( rcg, filts_smem_sz );
+      gen_filts_smem_loads( rcg, filts_smem_sz, "filts_smem[" );
       uint32_t const in_smem_load_iter = u32_ceil_div( in.dstride("blk_iter"), rcg->rtc_call_geom.tpb );    
       for( uint32_t i = 0; i != in_smem_load_iter; ++i ) {
 	string const ixe = "(LOC_ID_1D + %(tpb) * "+str(i)+")";
@@ -780,27 +780,27 @@ namespace boda
       dims_t const & stride = rcg->get_arg_dims_by_name( "stride" );
       dims_t const & work = rcg->get_arg_dims_by_name( "work" );
       dims_t const & filts = rcg->get_arg_dims_by_name( "filts" );
-      dims_t const & in = rcg->get_arg_dims_by_name( "in" );
+      dims_t const & in = rcg->get_arg_dims_by_name( "in_buf" );
       uint32_t const filts_smem_sz = filts.dstride("y");
       rcg->set( "filts_smem_sz", str(filts_smem_sz) );
-      gen_filts_smem_loads( rcg, filts_smem_sz );
+      gen_filts_smem_loads( rcg, filts_smem_sz, "all_smem[filts_smem_ix + " );
       rcg->line( "filts_smem_loads", "filts_off += %(filts_smem_sz);" );
       uint32_t const in_smem_load_iter = u32_ceil_div( in.dstride("blk_in_chan"), rcg->rtc_call_geom.tpb );  // in smem loads
       for( uint32_t i = 0; i != in_smem_load_iter; ++i ) {
 	string const ixe = "(LOC_ID_1D + %(tpb) * "+str(i)+")";
 	string eif;
-	if( (i+1)*rcg->rtc_call_geom.tpb > in.dstride("blk_in_chan") ) { rcg->line( "in_smem_loads", "if( "+ixe+" < %(in_blk_in_chan_stride)) { " );eif = "}";}
-	rcg->line( "in_smem_loads", strprintf("in_smem[%s] = in[ blk_in_ix_base + (%%(tpb)*%s) ];%s",	ixe.c_str(),str(i).c_str(),eif.c_str()));
+	if( (i+1)*rcg->rtc_call_geom.tpb > in.dstride("blk_in_chan") ) { rcg->line( "in_smem_loads", "if( "+ixe+" < %(in_buf_blk_in_chan_stride)) { " );eif = "}";}
+	rcg->line( "in_smem_loads", strprintf("all_smem[in_smem_ix + %s] = in_buf[ blk_in_ix_base + (%%(tpb)*%s) ];%s",	ixe.c_str(),str(i).c_str(),eif.c_str()));
       }
-      rcg->line( "in_smem_loads", "blk_in_ix_base += %(in_blk_in_chan_stride);" );
+      rcg->line( "in_smem_loads", "blk_in_ix_base += %(in_buf_blk_in_chan_stride);" );
 
       for( uint32_t i = 0; i != in.dsz("blk_x"); ++i ) {
-	rcg->line( "inner_loop_body", strprintf( "in_strip[%s] = in_smem_off[%s];", str(i).c_str(), str(i).c_str() ) );
+	rcg->line( "inner_loop_body", strprintf( "in_strip[%s] = all_smem[in_smem_off_ix + %s];", str(i).c_str(), str(i).c_str() ) );
       }
       assert_st( work.dsz("out_chan_tile") == filts.dsz("out_chan_tile") ); // also == %(filts_out_chan_reg_stride)
       for( uint32_t kx = 0; kx != filts.dsz("x"); ++kx ) {
 	for( uint32_t tx = 0; tx != work.dsz("out_chan"); ++tx ) {
-	  rcg->line( "inner_loop_body", strprintf( "filts_strip[%s] = filts_smem_off[%s*%%(filts_x_stride)+%s*%%(filts_out_chan_reg_stride)];", 
+	  rcg->line( "inner_loop_body", strprintf( "filts_strip[%s] = all_smem[filts_smem_off_ix + %s*%%(filts_x_stride)+%s*%%(filts_out_chan_reg_stride)];", 
 						     str(tx).c_str(), str(kx).c_str(), str(tx).c_str() ) );
 	}
 	for( uint32_t ty = 0; ty != work.dsz("pels"); ++ty ) {
@@ -812,17 +812,17 @@ namespace boda
 	}
       }
       for( uint32_t tx = 0; tx != work.dsz("out_chan"); ++tx ) {
-	rcg->line( "bias_loads", strprintf( "filts_strip[%s] = filts_smem_off[%s*%%(filts_out_chan_reg_stride)];", str(tx).c_str(), str(tx).c_str() ) );
+	rcg->line( "bias_loads", strprintf( "filts_strip[%s] = all_smem[filts_smem_off_ix + %s*%%(filts_out_chan_reg_stride)];", str(tx).c_str(), str(tx).c_str() ) );
       }
       //rcg->line( "stores", "  if( %(out_line_y) >= %(out_ix_y_stride) ) { return; }" ); // not possible
-      rcg->line( "stores", "if( %(out_line_img) >= %(out_img_dim) ) { return; }" );
-      rcg->line( "stores", "int32_t out_x = %(GRP_ID_1D_blk_bx)*%(work_pels_dim);" );
-      rcg->line( "stores", "int32_t out_chan = (%(GRP_ID_1D_out_chan_blk)*%(work_out_chan_tile_dim) + %(LOC_ID_1D_out_chan_tile))*%(work_out_chan_dim);" );
-      rcg->line( "stores", "GASQ float * out_off = out + %(out_line_img)*%(out_img_stride) + out_chan*%(out_chan_stride) + "
-		   "%(out_line_y)*%(out_y_stride) + out_x*%(out_x_stride) ;" );
+      rcg->line( "stores", "if( %(out_line_img) >= %(out_buf_img_dim) ) { return; }" );
+      rcg->line( "stores", "uint32_t out_x = %(GRP_ID_1D_blk_bx)*%(work_pels_dim);" );
+      rcg->line( "stores", "uint32_t out_chan = (%(GRP_ID_1D_out_chan_blk)*%(work_out_chan_tile_dim) + %(LOC_ID_1D_out_chan_tile))*%(work_out_chan_dim);" );
+      rcg->line( "stores", "uint32_t out_off_ix = 0 + %(out_line_img)*%(out_buf_img_stride) + out_chan*%(out_buf_chan_stride) + "
+		           "%(out_line_y)*%(out_buf_y_stride) + out_x*%(out_buf_x_stride) ;" );
 
       for( uint32_t ty = 0; ty != work.dsz("pels"); ++ty ) {
-	rcg->line( "stores", "if( (out_x + "+str(ty)+") >= %(out_x_dim) ) { return; } "
+	rcg->line( "stores", "if( (out_x + "+str(ty)+") >= %(out_buf_x_dim) ) { return; } "
 		     "// this x value and the following are off-the-end pels, so don't store them." );
 	for( uint32_t tx = 0; tx != work.dsz("out_chan"); ++tx ) {
 #if 1
@@ -831,8 +831,8 @@ namespace boda
 #else
 	  string const ve = strprintf( "(filts_strip[%s])", str(tx).c_str() );
 #endif
-	  rcg->line( "stores", strprintf( "if( (out_chan + %s) < %%(out_chan_dim) ) { "
-						   "out_off[ %s*%%(out_chan_stride) + %s*%%(out_x_stride) ] = %s; }",
+	  rcg->line( "stores", strprintf( "if( (out_chan + %s) < %%(out_buf_chan_dim) ) { "
+						   "out_buf[out_off_ix + %s*%%(out_buf_chan_stride) + %s*%%(out_buf_x_stride) ] = %s; }",
 						   str(tx).c_str(), str(tx).c_str(), str(ty).c_str(), ve.c_str() ) );
 	}
       }
