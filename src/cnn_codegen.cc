@@ -16,6 +16,7 @@ namespace boda
       else if( op_name == "k1conv" ) { gen_op_k1conv(rcg); } 
       else if( op_name == "k1conv_simd" ) { gen_op_k1conv_simd(rcg); } 
       else if( op_name == "tconv" ) { gen_op_tconv(rcg); } 
+      else if( op_name == "gconv" ) { gen_op_gconv(rcg); }
       else if( op_name == "sgemm" ) { gen_op_sgemm(rcg); } 
       else if( op_name == "sgemm_no_local" ) { gen_op_sgemm_no_local(rcg); } 
       else if( op_name == "sgemm_simd" ) { gen_op_sgemm_simd(rcg); } 
@@ -819,6 +820,57 @@ namespace boda
 						   "out_off[ %s*%%(out_chan_stride) + %s*%%(out_x_stride) ] = %s; }",
 						   str(tx).c_str(), str(tx).c_str(), str(ty).c_str(), ve.c_str() ) );
 	}
+      }
+    }
+    
+    void gen_op_gconv( rtc_call_gen_t * rcg ) {
+      dims_t const & work = rcg->get_arg_dims_by_name( "work" );
+      uint64_t const blk_M = work.dsz("Mb")*work.dsz("Mt");
+      uint32_t const filts_sm_sz = blk_M*work.dsz("Kb");
+      gen_sgemm_sm_load( rcg, "sm_loads", "filts", filts_sm_sz, blk_M, rcg->get_arg_dims_by_name("filts"), 1 );
+      uint64_t const blk_N = work.dsz("Nb")*work.dsz("Nt");
+      uint32_t const in_sm_sz = blk_N*work.dsz("Kb");
+      gen_sgemm_sm_load( rcg, "sm_loads", "in", in_sm_sz, blk_N, rcg->get_arg_dims_by_name("in"), 1 );
+      
+      for( uint32_t Kb = 0; Kb != work.dsz("Kb"); ++Kb ) {
+        for( uint32_t Mt = 0; Mt != work.dsz("Mt"); ++Mt ) {
+          rcg->line( "inner_loop_body", strprintf( "filts_r[%s] = filts_sm[filts_sm_off + %s];", str(Mt).c_str(), str(Mt+Kb*blk_M).c_str()));
+        }
+        for( uint32_t Nt = 0; Nt != work.dsz("Nt"); ++Nt ) {
+          rcg->line( "inner_loop_body", strprintf( "in_r[%s] = in_sm[in_sm_off + %s];", str(Nt).c_str(), str(Nt+Kb*blk_N).c_str()));
+        }
+        for( uint32_t Mt = 0; Mt != work.dsz("Mt"); ++Mt ) {
+          for( uint32_t Nt = 0; Nt != work.dsz("Nt"); ++Nt ) {
+            uint32_t const rix = (Mt*work.dsz("Nt")+Nt);
+            rcg->line( "inner_loop_body", strprintf( "out_r[%s] += filts_r[%s]*in_r[%s];",str(rix).c_str(), 
+                                                     str(Mt).c_str(), str(Nt).c_str()));
+          }
+        }
+      }
+      dims_t const & out_dims = rcg->get_arg_dims_by_name("out");
+      assert( out_dims.tinfo().is_float );
+      assert(out_dims.tsz() == 4);
+      gen_gconv_write_out( rcg );
+    }
+    
+    void gen_gconv_write_out( rtc_call_gen_t * rcg ) {
+      dims_t const & work = rcg->get_arg_dims_by_name( "work" );
+      dims_t const & out = rcg->get_arg_dims_by_name( "out" );
+      rcg->line( "outs_to_in_r", "switch(Mt) { " );
+      for( uint32_t Mt = 0; Mt != work.dsz("Mt"); ++Mt ) {
+        rcg->line( "outs_to_in_r", "case "+str(Mt)+":" );
+          for( uint32_t Nt = 0; Nt != work.dsz("Nt"); ++Nt ) {
+            uint32_t const rix = (Mt*work.dsz("Nt")+Nt);
+            rcg->line( "outs_to_in_r", strprintf( "in_r[%s] = out_r[%s];", str(Nt).c_str(), str(rix).c_str() ) );  
+          }
+        rcg->line( "outs_to_in_r", "break;" );
+      }
+      rcg->line( "outs_to_in_r", "} " );
+
+      // note: for this section, there will be a local 'Mt' in scope, used to adjust out_off each iteration
+      // FIXME: Accessing biases is not efficient due to requesting from DRAM instead of shmem or registers
+      for( uint32_t Nt = 0; Nt != work.dsz("Nt"); ++Nt ) {
+        rcg->line( "stores", strprintf( "out[out_off+%s] = in_r[%s] + biases[out_off/%s];", str(Nt).c_str(), str(Nt).c_str(), str(out.dsz("N")).c_str() ) ); 
       }
     }
   };
