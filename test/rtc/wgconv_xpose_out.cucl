@@ -1,0 +1,70 @@
+CUCL_GLOBAL_KERNEL void %(rtc_func_name) (GASQ float * const out, // CUCL IN img:chan:a1:a2
+    GASQ float * const out_ref, // CUCL OUT img:chan:y:x
+    GASQ void const * const work // CUCL REF l32a:l32b:l8a:l8b:l4a:l4b:l2a:gxl:gyl:gpl:gql:gkl:gcl:gncl:r:a:ul:pels_blk:out_chan_blk:pels_tile:out_chan_tile:pels:out_chan
+    )
+{
+  // ddCUCL IX GRP_ID_1D work use_dims=gxl:gql:gpl
+  // ddCUCL IX LOC_ID_1D work use_dims=l2a:l8a:l8b
+  // CUCL IX GLOB_ID_1D work use_dims=gxl:gql:gpl
+
+  // get global ids:
+  //int ii = GRP_ID_1D * (2*8*8) + LOC_ID_1D;
+  /*int ii = GLOB_ID_1D;
+    int g0 = ii / (%(w_Q)*%(w_P));
+    int g1 = (ii %% (%(w_Q)*%(w_P))) / %(w_P);
+    int g2 = ii %% %(w_P);
+
+    const int k = g2 / %(w_K);
+    const int n = g2 %% %(w_K);
+    const int blockY = g0;
+    const int blockX = g1;*/
+
+
+  int ii = GLOB_ID_1D;
+  int g0 = ii / (%(w_Q)*%(w_K)*%(w_N));
+  int g1 = (ii %% (%(w_Q)*%(w_K)*%(w_N))) / (%(w_K)*%(w_N));
+  int g2 = (ii %% (%(w_K)*%(w_N))) / %(w_N);
+  int g3 = ii %% %(w_N);
+
+  int k = g2;
+  int n = g3;
+  int blockY = g0;
+  int blockX = g1;
+
+  /*if (ii >= %(w_K)*%(w_N)*%(w_P)*%(w_Q))
+    return;*/
+  if (k >= %(w_K) || n >= %(w_N) || blockY >= %(w_P) || blockX >= %(w_Q))
+    return;
+
+  int b = blockY * %(w_Q) + blockX;
+  int P = %(w_P) * %(w_Q);
+  float m[%(w_A)][%(w_A)];
+  for(int xi = 0; xi < %(w_A); xi++)
+    for(int nu = 0; nu < %(w_A); nu++)
+      //m[xi][nu] = 1; //out[xi*(%(w_A)*%(w_K)*P*%(w_N)) + nu*(%(w_K)*P*%(w_N))+ k*P + n*P*%(w_K) + b];
+      m[xi][nu] = out[xi*(%(w_A)*%(w_K)*P*%(w_N)) + nu*(%(w_K)*P*%(w_N))+ k*P + n*P*%(w_K) + b];
+
+  float Atm[%(w_O)][%(w_A)];
+  float tmp[%(w_O)][%(w_O)];
+  //for(int i = 0; i < %(w_A); i++) { 
+    %(first_mul)
+
+  int x = blockX * %(w_O);
+  int y = blockY * %(w_O);
+
+  //for(int i = 0; i < %(w_O); i++) {
+    %(second_mul)
+  //Y[n*(K*out_H*out_W) + k*(out_H*out_W) + (y+i)*out_W + (x+j)] = 2;
+  for (int i = 0; i < %(w_O); ++i)
+    for (int j = 0; j < %(w_O); ++j)
+    out_ref[n*(%(w_K)*%(w_H)*%(w_W)) + k*(%(w_H)*%(w_W)) + (y+i)*%(w_W) +  (x+j)] = tmp[i][j];
+    //out_ref[n*(%(w_K)*%(w_P)*%(w_Q)) + k*(%(w_P)*%(w_Q)) + (y+i)*%(w_Q) +  (x+j)] = 2;
+  //out_ref[ii] = g1;
+
+  // Coverage test: 
+  /*out_ref[ii*4] = 3;
+    out_ref[ii*4+1] = 3;
+    out_ref[ii*4+2] = 3;
+    out_ref[ii*4+3] = 3;*/
+}
+

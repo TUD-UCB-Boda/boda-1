@@ -7,7 +7,7 @@
 #include"lexp.H"
 #include<sstream>
 
-namespace boda 
+namespace boda
 {
 
   // based on the semantics/type of the operation represented by conv_op_base_t and the code generation parameters,
@@ -21,6 +21,8 @@ namespace boda
     bool const enable_ipconv = op_tune->ipconv;
     bool const enable_k1conv = op_tune->k1conv;
     bool const enable_tconv = op_tune->tconv;
+    bool const enable_wgconv = op_tune->wgconv;
+    bool const enable_wfconv = op_tune->wfconv;
     bool const force_enable_tconv = (op_tune->tconv==2);
     dims_t ni_dims;
     dims_t no_dims = op->get_dims( op->coi->top_an(0) );
@@ -42,17 +44,21 @@ namespace boda
 	else if( op->is( Spreading_coi ) ) { kern_sz_ = get_xy_dims( no_dims ); }
 	else { assert_st(0); }
 	op->set_dims("kern_sz", dims_t{ {kern_sz_.d[1],kern_sz_.d[0]}, {"y","x"}, "none" } ); // FIXME: not ideal ...
-      } 
+      }
       if( is_conv ) { // set func_name (aka variant) for conv case (others are set at bottom)
-        if( op_tune->use_culibs ) { 
+        if( op_tune->use_culibs ) {
           op->set_func_name("cudnn_conv");
+        } else if( enable_wgconv && (op->stride() == u32_pt_t{1,1})) {
+          op->set_func_name( wgconv_str );
+        } else if( enable_wfconv && (op->stride() == u32_pt_t{1,1})) {
+          op->set_func_name( wfconv_str );
         } else if( enable_ipconv && op->in_pad().is_zeros() && (get_xy_dims(no_dims) == u32_pt_t{1,1}) ) {
           op->set_func_name( ipconv_str ); // single output per-chan-per-image: inner-product case
-        } else if( enable_k1conv && (kern_sz_ == u32_pt_t{1,1}) && (op->stride() == u32_pt_t{1,1}) 
-                   && (no_sz.d[0] >= 6) && (no_sz.d[0] <= 300 ) && (no_dims.dsz("chan") >= 64) ) 
-        { 
+        } else if( enable_k1conv && (kern_sz_ == u32_pt_t{1,1}) && (op->stride() == u32_pt_t{1,1})
+                   && (no_sz.d[0] >= 6) && (no_sz.d[0] <= 300 ) && (no_dims.dsz("chan") >= 64) )
+        {
           if( !op->in_pad().is_zeros() ) { printf( "warning: can't use k1conv due only to non-zero padding on layer with kernel size 1\n" ); op->set_func_name( conv_str ); }
-          else { 
+          else {
             if( op_tune->use_local_mem == 2 ) { op->set_func_name( k1conv_simd_str ); }
             else { op->set_func_name( k1conv_str ); }
           }
@@ -61,7 +67,7 @@ namespace boda
                                                           && (kern_sz_.both_dims_ge(u32_pt_t{1,1}) && (no_sz.d[0] >= 6))))) {
           op->set_func_name( tconv_str );
         }
-        else { 
+        else {
           if( op_tune->use_local_mem == 2 ) { op->set_func_name( conv_simd_str ); }
           else { op->set_func_name( conv_str ); }
         }
@@ -80,7 +86,7 @@ namespace boda
       if( op->is( BckConv_coi ) ) {
 	// note: since fwd strides are always N/1, bck 'strides' are always 1/N, meaning stride in the fwd sense will
 	// always be 1 for the bck conv: 3x3@s2 -> 2x2@s1; 11x11@s4 -> 3x3@s1; 1x1@s1 -> 1x1@s1 ...
-	u32_pt_t bck_kern_sz = ceil_div( kern_sz_, op->stride() ); 
+	u32_pt_t bck_kern_sz = ceil_div( kern_sz_, op->stride() );
 	// if back kernel conv is convolved aligned to the - corner of output space, it yields results for the
 	// post-padding input space region: [bck_in_off,bck_in_off+stride)
 	u32_pt_t const bck_pad_in_off = (bck_kern_sz - u32_pt_t(1,1)) * op->stride();
@@ -95,11 +101,11 @@ namespace boda
 	// now, to get patch count, see how many in pels we're missing
 	bck_in_off -= bck_in_pad * u32_to_i32(op->stride()); // first region calculated at - corner of padding out space
 	// calculate number of extra pels needed to cover last pel in unpadded input space
-	i32_pt_t bck_pels_sz = ceil_div( u32_to_i32(get_xy_dims(no_dims)) - (bck_in_off + u32_to_i32(op->stride())), op->stride() ); 
+	i32_pt_t bck_pels_sz = ceil_div( u32_to_i32(get_xy_dims(no_dims)) - (bck_in_off + u32_to_i32(op->stride())), op->stride() );
 	bck_pels_sz += i32_pt_t(1,1); // include starting pixel
 	assert_st( bck_pels_sz.both_dims_gt( i32_pt_t() ) );
 
-	op->set_dims("bck_in_pad",dims_t( vect_uint32_t{ uint32_t(bck_in_pad.d[1]), uint32_t(bck_in_pad.d[0]) }, 
+	op->set_dims("bck_in_pad",dims_t( vect_uint32_t{ uint32_t(bck_in_pad.d[1]), uint32_t(bck_in_pad.d[0]) },
                                           vect_string{"y","x"}, "none" ));
 	op->set_dims("bck_pad_in_off",dims_t( vect_uint32_t{ bck_pad_in_off.d[1], bck_pad_in_off.d[0] }, vect_string{"y","x"}, "none" ));
 
@@ -107,9 +113,9 @@ namespace boda
 	dims_t const & fgld = op->get_dims("filts_grad_loss");
 
 	gbt_tile_t gbt;
-	op->set_dims("oix",dims_t(  vect_uint32_t{ no_dims.dsz("chan"), op->stride().d[1], op->stride().d[0] }, 
+	op->set_dims("oix",dims_t(  vect_uint32_t{ no_dims.dsz("chan"), op->stride().d[1], op->stride().d[0] },
                                     vect_string{ "in_chan", "sy", "sx" }, "none" ));
-	op->set_dims("pix",dims_t(  vect_uint32_t{ no_dims.dsz("img"), 
+	op->set_dims("pix",dims_t(  vect_uint32_t{ no_dims.dsz("img"),
                 uint32_t(bck_pels_sz.d[1]), uint32_t(bck_pels_sz.d[0]) }, vect_string{ "img", "y", "x" }, "none" ));
 	gbt.init( t_tile_sz, max_tpb, u32_pt_t( op->get_dims("pix").dims_prod(), op->get_dims("oix").dims_prod()));
 	dims_t work;
@@ -121,9 +127,9 @@ namespace boda
 	work.add_dims( "pels", gbt.mn_per_thr.d[0], "out_ix", gbt.mn_per_thr.d[1] );
 	work.calc_strides();
 	op->set_dims("work",work);
-	op->set_dims("fioc",dims_t( vect_uint32_t{ ogld.dsz("chan"), u32_ceil_div(kern_sz_.d[1],op->stride().d[1]), 
+	op->set_dims("fioc",dims_t( vect_uint32_t{ ogld.dsz("chan"), u32_ceil_div(kern_sz_.d[1],op->stride().d[1]),
                 u32_ceil_div(kern_sz_.d[0],op->stride().d[0]) }, vect_string{"out_chan","ky","kx"}, "none" ));
-	  
+
 	gbt_tile_t gbt_fb;
 	gbt_fb.init( t_tile_sz, max_tpb, u32_pt_t( fgld.dsz("in_chan")*fgld.dsz("y")*fgld.dsz("x"), fgld.dsz("out_chan") ) );
 	dims_t work_fb;
@@ -152,12 +158,105 @@ namespace boda
 	dims_t work;
         work.tn = "none";
 	uint32_t const lines_sz = no_dims.dsz("img") * no_sz.d[1];
-        if( (op->get_func_name() == tconv_str) || (op->get_func_name() == k1conv_str) ) { 
+        if( (op->get_func_name() == tconv_str) || (op->get_func_name() == k1conv_str) ) {
           op->set_dims("flags",make_scalar_dims_t("uint32_t")); // exactly these two variants have this debugging input
+        }
+
+        if( op->get_func_name() == wfconv_str) {
+          dims_t const & img_in = op->get_dims("in");
+          dims_t const & filts = op->get_dims("filts");
+          dims_t const & out= op->get_dims("out");
+
+          const uint32_t alpha = filts.dsz("x")+op_tune->wots-1;
+          work.add_dims("wino_tpb", 256);
+          work.add_dims("a", alpha);
+          work.add_dims("o", op_tune->wots);
+          work.add_dims("ul", op_tune->lu);
+                uint32_t const out_tile = op_tune->wots;
+
+          uint32_t Nw, TPw, TQw;
+          uint32_t const bs = img_in.dsz("img");
+          if (bs < 2) { Nw = 0; TPw = 2; TQw = 3; }
+          else if (bs < 4) { Nw = 1; TPw = 2; TQw = 2; }
+          else if (bs < 8) { Nw = 2; TPw = 1; TQw = 2; }
+          else if (bs < 16) { Nw = 3; TPw = 1; TQw = 1; }
+          else if (bs < 32) { Nw = 4; TPw = 0; TQw = 1; }
+          else { Nw = 5; TPw = 0; TQw = 0; }
+          work.add_dims("wino_tp", u32_ceil_div(img_in.dsz("x"), out_tile << TPw));
+          work.add_dims("wino_tq", u32_ceil_div(img_in.dsz("y"), out_tile << TQw));
+          work.add_dims("wino_tk", u32_ceil_div(op->get_dims("filts").dsz("out_chan"), 32));
+          work.add_dims("wino_tn", u32_ceil_div(img_in.dsz("img"), 1 << Nw));
+          int filts_work = filts.dsz("out_chan")*filts.dsz("in_chan")*filts.dsz("x")*filts.dsz("y");
+          work.add_dims("filts_work", filts_work);
+          int img_work = img_in.dsz("img")*img_in.dsz("x")*img_in.dsz("y")*img_in.dsz("chan");
+          work.add_dims("img_work", img_work);
+          int out_work = out.dsz("img")*out.dsz("x")*out.dsz("y")*out.dsz("chan");
+          work.add_dims("out_work", out_work);
+          work.calc_strides();
+
+          in_dims = dims_t( vect_uint32_t{
+              img_in.dsz("chan"),img_in.dsz("y"),img_in.dsz("x"),img_in.dsz("img") },
+              vect_string{"chan","y","x","img"}, in_dims.tn );
+          uint32_t in_chan_pad = ni_dims.dsz("chan"); // c&p
+          uint32_t out_chan_pad = out.dsz("chan");
+          op->reset_dims("filts",dims_t(
+                vect_uint32_t{ in_chan_pad, kern_sz_.d[1], kern_sz_.d[0], out_chan_pad },
+                vect_string{"in_chan","y","x","out_chan"}, op->get_dims("filts").tn ));
+
+          op->reset_dims("out",dims_t( vect_uint32_t{
+                out.dsz("img"), out.dsz("chan"), out.dsz("y"), out.dsz("x")},
+                vect_string{"img","chan","y","x"},
+                op->get_dims("out").tn ));
+        }
+        if( op->get_func_name() == wgconv_str) {
+          dims_t const & filts = op->get_dims("filts");
+          dims_t const & img = op->get_dims("in");
+          dims_t const & out = op->get_dims("out");
+          const uint32_t alpha = filts.dsz("x")+op_tune->wots-1;
+          uint32_t p = u32_ceil_div(img.dsz("x"), op_tune->wots);
+          uint32_t q = u32_ceil_div(img.dsz("y"), op_tune->wots);
+          printf("p and q are %d %d\n", p, q);
+          work.add_dims("l32a", 32);
+          work.add_dims("l32b", 32);
+          work.add_dims("l8a", 8);
+          work.add_dims("l8b", 8);
+          work.add_dims("l4a", 4);
+          work.add_dims("l4b", 4);
+          work.add_dims("l2a", 2);
+          work.add_dims("gxl", filts.dsz("out_chan")*img.dsz("img"));
+          work.add_dims("gyl", p*q);
+          work.add_dims("gpl", p);
+          work.add_dims("gql", q);
+          work.add_dims("gkl", filts.dsz("out_chan"));
+          work.add_dims("gcl", filts.dsz("in_chan"));
+          work.add_dims("gncl", img.dsz("img")*img.dsz("chan"));
+          work.add_dims("r", filts.dsz("x"));
+          //work.add_dims("igload", img.dsz("img")*img.dsz("chan")*img.dsz("x")*img.dsz("y"));
+          work.add_dims( "a", alpha );
+          work.add_dims("ul", op_tune->lu);
+          work.calc_strides();
+          op->set_u32("alpha", alpha);
+          op->set_u32("i", 0);
+
+          printf("out work size: %d %d %d", filts.dsz("out_chan")*img.dsz("img"), q, p);
+          printf("alpha set to %d\n", alpha);
+          uint32_t a1 = p*alpha;
+          uint32_t a2 = q*alpha;
+          op->reset_dims("filts",dims_t(vect_uint32_t{ filts.dsz("out_chan"), filts.dsz("in_chan"), alpha, alpha}, vect_string{"out_chan","in_chan","a1","a2"}, op->get_dims("filts").tn ));
+
+          in_dims = dims_t( vect_uint32_t{
+              img.dsz("img"), img.dsz("chan"), a1, a2},
+              vect_string{"img","chan","a1","a2"}, in_dims.tn );
+
+          op->reset_dims("out",dims_t( vect_uint32_t{
+                out.dsz("img"), out.dsz("chan"), a1, a2},
+                vect_string{"img","chan","a1","a2"},
+                op->get_dims("out").tn ));
+          //op->reset_dims("filts",dims_t(vect_uint32_t{ filts.dsz("out_chan"), filts.dsz("in_chan"),  }, vect_string{"out_chan","in_chan"}, op->get_dims("filts").tn ));
         }
 	if( op->get_func_name() == tconv_str ) {
 	  assert( gbt.thr_per_blk.d[0] >= 2 ); // if 1, would imply tconv_blk_max_imgs = 1 (but not sensible?)
-	  work.add_dims( "blk_bline", u32_ceil_div( lines_sz, gbt.thr_per_blk.d[0] ), 
+	  work.add_dims( "blk_bline", u32_ceil_div( lines_sz, gbt.thr_per_blk.d[0] ),
 			 "blk_bx", u32_ceil_div( no_sz.d[0], gbt.mn_per_thr.d[0] ) );
 	  uint32_t tconv_blk_max_imgs = 0;
 	  uint32_t blk_b_line = 0;
@@ -172,7 +271,7 @@ namespace boda
 	  }
 	  assert_st( tconv_blk_max_imgs );
 	  // calc conservative value (may be lower in general or for some num_imgs) and use as check:
-	  uint32_t const conservative_conv_max_img_per_blk = 2 + ((gbt.thr_per_blk.d[0] - 2)/no_sz.d[1]); 
+	  uint32_t const conservative_conv_max_img_per_blk = 2 + ((gbt.thr_per_blk.d[0] - 2)/no_sz.d[1]);
 	  assert_st( tconv_blk_max_imgs <= conservative_conv_max_img_per_blk );
 	  //printf( "no_sz.d[1]=%s thr_per_blk.d[0]=%s\n", str(no_sz.d[1]).c_str(), str(thr_per_blk.d[0]).c_str() );
 	  //printf( "tconv_blk_max_imgs=%s\n", str(tconv_blk_max_imgs).c_str() );
@@ -201,22 +300,22 @@ namespace boda
 	work.add_dims(   "out_chan_tile", gbt.thr_per_blk.d[1] );
 
 	work.add_dims( "pels", gbt.mn_per_thr.d[0], "out_chan", gbt.mn_per_thr.d[1] ); // dims of per-thread work
-	if( op->get_func_name() == ipconv_str ) { 
+	if( op->get_func_name() == ipconv_str ) {
 	  uint32_t fioc_tile = 4;
 	  while( (fioc_tile < 32) && (fioc_tile*2*gbt.thr_per_blk.dims_prod()) <= 512 ) { fioc_tile *= 2; }
 	  assert_st( (ni_dims.dsz("chan") % fioc_tile) == 0 );
-	  work.add_dims( "fioc_tile", fioc_tile ); 
+	  work.add_dims( "fioc_tile", fioc_tile );
 	} // unrolling/tiling of inner loop
 	work.calc_strides();
 
-	if( op->get_func_name() == k1conv_str ) { 
+	if( op->get_func_name() == k1conv_str ) {
 	  uint32_t const in_blk_iter_chan_dim = op_tune->Kb;
 	  // the k1conv/xpose_in format is for use when stride=1, kernel_sz=1, and in_pad=0. we treat all input pixels as one 1D
 	  // vector across img:y:x, and divide them into blocks. we also block in the chan dim for unrolling.
 	  in_dims = dims_t( vect_uint32_t{
-	      work.dsz("pels_blk"), u32_ceil_div(ni_dims.dsz("chan"),in_blk_iter_chan_dim), in_blk_iter_chan_dim, work.dsz("pels_tile")*work.dsz("pels")}, 
-	    vect_string{"blk","blk_iter","blk_iter_chan","blk_pel"}, in_dims.tn ); 
-	} else if( op->get_func_name() == k1conv_simd_str ) { 
+	      work.dsz("pels_blk"), u32_ceil_div(ni_dims.dsz("chan"),in_blk_iter_chan_dim), in_blk_iter_chan_dim, work.dsz("pels_tile")*work.dsz("pels")},
+	    vect_string{"blk","blk_iter","blk_iter_chan","blk_pel"}, in_dims.tn );
+	} else if( op->get_func_name() == k1conv_simd_str ) {
           // currently, the codegen/code doesn't support some cases. so, for those, bail. FIXME: how to sync this with the codegen?
           if( (work.dsz("pels") % op_tune->vw) != 0 ) { unsup_err( "k1conv_simd only supports work.pels being a multiple of vw" ); }
           if( (work.dsz("out_chan") % op_tune->vw) != 0 ) {unsup_err( "k1conv_simd only supports work.out_chan being a multiple of vw" ); }
@@ -230,12 +329,12 @@ namespace boda
           // FIXME: pad in_chan to multiple of Kb?
           op->set_u32( "Kb", op_tune->Kb );
           uint32_t in_chan_pad = ni_dims.dsz("chan"); // not padded yet but may be layer; note: == filts in_chan dim
-          in_dims = dims_t( vect_uint32_t{ in_chan_pad, pels_sz_pad }, vect_string{"chan","pel"}, in_dims.tn ); 
+          in_dims = dims_t( vect_uint32_t{ in_chan_pad, pels_sz_pad }, vect_string{"chan","pel"}, in_dims.tn );
           // note: for now, we don't pad and/or xpose out, so the store code must handle that.
-	  op->reset_dims("filts",dims_t( 
-            vect_uint32_t{ in_chan_pad, kern_sz_.d[1], kern_sz_.d[0], out_chan_pad }, 
-            vect_string{"in_chan","y","x","out_chan"}, op->get_dims("filts").tn )); 
-	  op->reset_dims("out",dims_t( vect_uint32_t{ out_chan_pad, pels_sz_pad }, 
+	  op->reset_dims("filts",dims_t(
+            vect_uint32_t{ in_chan_pad, kern_sz_.d[1], kern_sz_.d[0], out_chan_pad },
+            vect_string{"in_chan","y","x","out_chan"}, op->get_dims("filts").tn ));
+	  op->reset_dims("out",dims_t( vect_uint32_t{ out_chan_pad, pels_sz_pad },
                                        vect_string{"chan","pel"}, op->get_dims("out").tn ));
 	} else if( op->get_func_name() == conv_simd_str ) {
           op->set_u32( "vw", op_tune->vw );
@@ -252,12 +351,12 @@ namespace boda
           // FIXME/NOTE: most things below work when the stride is different in X and Y. however, determining the
           // offsets into in inside the kernel is harder if we can't do it using a linear indexing system (i.e. in_pel =
           // out_pel*uniform_stride). so, for now, we only allow uniform X/Y stride, and note this in the kernel
-          assert_st( op->stride().dims_are_same() ); 
+          assert_st( op->stride().dims_are_same() );
           in_xy = ceil_align( in_xy, op->stride() ); // align to stride
           u32_pt_t out_xy = in_xy / op->stride(); // will divide exactly by construction
           // these are (for reference) the nested dims for the pel dim of in/out
 	  op->set_dims("in_pels",dims_t( vect_uint32_t{ in_dims.dsz("img"), in_xy.d[1], in_xy.d[0] },
-                                         vect_string{"img","y","x"}, "none" )); 
+                                         vect_string{"img","y","x"}, "none" ));
 	  op->set_dims("out_pels",dims_t( vect_uint32_t{ in_dims.dsz("img"), out_xy.d[1], out_xy.d[0] },
                                           vect_string{"img","y","x"}, "none" )); // min output pels we must calculate
           work = dims_t(); // need to recalculate work. FIXME: need to refactor to make this cleaner across cases
@@ -280,32 +379,32 @@ namespace boda
           // hang off the last image. so we max over those two quantities (either could be higher).
           u32_pt_t const fin_pad_xy = max( kern_sz_ - op->stride(), op->in_pad() );
           uint32_t filt_dep_extra_in_pad = (fin_pad_xy.d[1])*op->get_dims("in_pels").dstride("y") +
-            (fin_pad_xy.d[0])*op->get_dims("in_pels").dstride("x"); 
+            (fin_pad_xy.d[0])*op->get_dims("in_pels").dstride("x");
           uint32_t final_in_pels_pad = u32_ceil_align( op->get_dims("in_pels").dims_prod()+filt_dep_extra_in_pad,op_tune->vw);
-          in_dims = dims_t( vect_uint32_t{ in_chan_pad, final_in_pels_pad }, vect_string{"chan","pel"}, in_dims.tn ); 
+          in_dims = dims_t( vect_uint32_t{ in_chan_pad, final_in_pels_pad }, vect_string{"chan","pel"}, in_dims.tn );
           // note: for now, we don't pad and/or xpose out, so the store code must handle that.
-	  op->reset_dims("filts",dims_t( 
-            vect_uint32_t{ in_chan_pad, kern_sz_.d[1], kern_sz_.d[0], out_chan_pad }, 
-            vect_string{"in_chan","y","x","out_chan"}, op->get_dims("filts").tn )); 
-	  op->reset_dims("out",dims_t( vect_uint32_t{ out_chan_pad, pels_sz_pad }, vect_string{"chan","pel"}, 
-                                     op->get_dims("out").tn )); 
+	  op->reset_dims("filts",dims_t(
+            vect_uint32_t{ in_chan_pad, kern_sz_.d[1], kern_sz_.d[0], out_chan_pad },
+            vect_string{"in_chan","y","x","out_chan"}, op->get_dims("filts").tn ));
+	  op->reset_dims("out",dims_t( vect_uint32_t{ out_chan_pad, pels_sz_pad }, vect_string{"chan","pel"},
+                                     op->get_dims("out").tn ));
         }
 	op->set_dims("work",work);
 	// k1conv and in_tile_xpose need the standard output dims for reference. curently this == the dims of "out",
 	// but a later pass might change the desired output format by changing the "out" dims. however, the "out_ref"
 	// dims will remain unchanged at this value.
-	op->set_dims("out_ref",no_dims); 
+	op->set_dims("out_ref",no_dims);
 	// set final desired format for input. note: (1) original 'standard' format is stored as "in_ref" earlier (2)
 	// the dims of "in" may now differ from the dims of the global/rtc variable in the arg_map that "in" is bound
 	// to. our convention is that we expect or detect this in codegen and emit the need xform at that point. when
 	// we do this, we may change the binding for "in" (e.g. to point to an xformed version of the original
 	// variable).
-        op->reset_dims("in",in_dims); 
+        op->reset_dims("in",in_dims);
         if( is_k1_or_t_or_reg_conv( op->get_func_name() ) ) {
-          op->reset_dims("filts",dims_t( vect_uint32_t{ work.dsz("out_chan_blk"),ni_dims.dsz("chan"), 
+          op->reset_dims("filts",dims_t( vect_uint32_t{ work.dsz("out_chan_blk"),ni_dims.dsz("chan"),
                   kern_sz_.d[1], kern_sz_.d[0],
                   work.dsz("out_chan"),work.dsz("out_chan_tile")}, vect_string{"out_chan_blk","in_chan","y","x",
-                                                                       "out_chan_reg","out_chan_tile"}, 
+                                                                       "out_chan_reg","out_chan_tile"},
               op->get_dims("filts").tn ));
           }
 	// dims_t( vect_uint32_t{out_chans}, vect_string{"out_chan"}, 1 );
@@ -345,16 +444,16 @@ namespace boda
         uint64_t const N_blk = op_tune.MNb.d[1] * op_tune.MNt.d[1];
         uint64_t const Mg = c.dsz("M") / M_blk;
         uint64_t const Ng = c.dsz("N") / N_blk;
-        if( Mg * M_blk != c.dsz("M") ) { 
-          rt_err( strprintf( "FIXME: currently, M=%s must be a multiple of M_blk=%s\n", 
+        if( Mg * M_blk != c.dsz("M") ) {
+          rt_err( strprintf( "FIXME: currently, M=%s must be a multiple of M_blk=%s\n",
                              str(c.dsz("M")).c_str(), str(M_blk).c_str() ) );
         }
-        if( Ng * N_blk != c.dsz("N") ) { 
-          rt_err( strprintf( "FIXME: currently, N=%s must be a multiple of N_blk=%s\n", 
+        if( Ng * N_blk != c.dsz("N") ) {
+          rt_err( strprintf( "FIXME: currently, N=%s must be a multiple of N_blk=%s\n",
                              str(c.dsz("N")).c_str(), str(N_blk).c_str() ) );
         }
-        if( K % op_tune.Kb ) { 
-          rt_err( strprintf( "FIXME: currently, K=%s must be a multiple of Kb=%s\n", 
+        if( K % op_tune.Kb ) {
+          rt_err( strprintf( "FIXME: currently, K=%s must be a multiple of Kb=%s\n",
                              str(K).c_str(), str(op_tune.Kb).c_str() ) );
         }
 
@@ -364,18 +463,18 @@ namespace boda
         anno_op->set_u32( "use_local_mem", op_tune.use_local_mem );
         anno_op->set_u32( "prof_variant", op_tune.prof_variant );
         anno_op->set_u32( "vw", op_tune.vw );
-        if( op_tune.prof_variant ) { anno_op->set_func_name("sgemm_prof"); } 
+        if( op_tune.prof_variant ) { anno_op->set_func_name("sgemm_prof"); }
         else {
           if( 0 ) { }
           else if( op_tune.use_local_mem == 0 ) { anno_op->set_func_name("sgemm_no_local"); }
           else if( op_tune.use_local_mem == 1 ) { anno_op->set_func_name("sgemm"); }
           else if( op_tune.use_local_mem == 2 ) { anno_op->set_func_name("sgemm_simd"); }
           else if( op_tune.use_local_mem == 3 ) { anno_op->set_func_name("sgemm_simd_local"); }
-          else { rt_err( strprintf( "unknonw value for op_tune.use_local_mem of %s\n", 
+          else { rt_err( strprintf( "unknonw value for op_tune.use_local_mem of %s\n",
                                     str(op_tune.use_local_mem).c_str() ) ); }
-          
+
         }
-      }	  
+      }
     }
   }
 

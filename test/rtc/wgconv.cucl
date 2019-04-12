@@ -1,0 +1,75 @@
+CUCL_GLOBAL_KERNEL void %(rtc_func_name) (
+    //GASQ float const * const filts_ref, // CUCL REF out_chan:in_chan:y:x
+    GASQ float const * const filts, // CUCL IN out_chan:in_chan:a1:a2
+    GASQ float const * const in, // CUCL IN img:chan:a1:a2
+    GASQ float const * const in_ref, // CUCL REF img:chan:y:x
+    //GASQ float * const out, // CUCL OUT img:chan:y:x
+    GASQ float * const out, // CUCL OUT img:chan:a1:a2
+    GASQ float * const out_ref, // CUCL REF img:chan:y:x
+    uint32_t const alpha, // CUCL IN :
+    uint32_t const i, // CUCL IN :
+    GASQ void const * const work) // CUCL REF l32a:l32b:l8a:l8b:l4a:l4b:l2a:gxl:gyl:gpl:gql:gkl:gcl:gncl:r:a:ul:pels_blk:out_chan_blk:pels_tile:out_chan_tile:pels:out_chan
+{
+    // dasCUCL IX GRP_ID_1D work use_dims=gxl:gyl
+    // dsaCUCL IX LOC_ID_1D work use_dims=l32a:l32b
+    // CUCL IX GLOB_ID_1D work use_dims=gxl:gyl
+    // This use_dims might be misleadying, because it says K*N:P instead of K:N*P. But since boda uses 1D indices, that's not a problem.
+
+    int PQ = %(w_P) * %(w_Q);
+    int AA = %(alpha) * %(alpha); // alpha*alpha
+    int foff = %(filts_out_chan_dim) * %(filts_in_chan_dim);
+    int ioff = %(filts_in_chan_dim) * %(in_img_dim) * PQ;
+    //const int ioff = %(w_P) * %(w_Q) * %(in_img_dim) * AA; // hTiles * wTiles * N * alpha*alpha
+    //const int ooff = %(filts_out_chan_dim) * %(in_img_dim) * PQ * AA;
+    int KNP = %(filts_out_chan_dim) * %(in_img_dim) * PQ;
+    int NP = %(in_img_dim) * PQ;
+
+    //const int row = GLOB_ID_1D  / NP;
+    //const int col = GLOB_ID_1D %% NP;
+    //if (row >= %(filts_out_chan_dim) || col >= NP)
+    //  return;
+    int b = GLOB_ID_1D / (%(filts_out_chan_dim) * %(in_img_dim));
+    int k = (GLOB_ID_1D %% (%(filts_out_chan_dim) * %(in_img_dim))) / %(in_img_dim);
+    int n = GLOB_ID_1D %% %(in_img_dim);
+
+    if (b >= PQ || k >= %(filts_out_chan_dim) || n >= %(in_img_dim))
+      return;
+
+    /*float acc = 0.0f;
+    for (int k=0; k < %(filts_in_chan_dim); k++) {
+        acc += filts[i*foff + k* %(filts_in_chan_dim) + row] * in[i*ioff + col* %(filts_in_chan_dim) + k];
+    }*/
+    int KC = %(filts_out_chan_dim)*%(filts_in_chan_dim);
+
+    float sum;
+    for (int xi = 0; xi < %(alpha); xi++) {
+        for (int nu = 0; nu < %(alpha); nu++) {
+            sum = 0;
+            for (int c = 0; c < %(filts_in_chan_dim); c++)
+            //    sum += U[xi*(ALPHA*K*C) + nu*(K*C) + k*C + c]
+                    //* V[xi*(ALPHA*C*P*N) + nu*(C*P*N) + c*P + n*P*C + b];
+                sum += filts[xi*(%(alpha)*KC) + nu*(KC) + k*%(filts_in_chan_dim) + c] 
+                  * in[xi*(%(alpha)*%(filts_in_chan_dim)*NP) + nu*(%(filts_in_chan_dim)*NP) + c*PQ + n*PQ*%(filts_in_chan_dim) + b];
+        //sum+= filts[i*foff + k* %(filts_in_chan_dim) + row] * in[i*ioff + col* %(filts_in_chan_dim) + k];
+            //Mt[xi*(ALPHA*K*P*N) + nu*(K*P*N) + k*P + n*P*K + b] = sum;
+            out[xi*(%(alpha)*%(filts_out_chan_dim)*NP) + nu*(%(filts_out_chan_dim)*NP) + k*PQ + n*PQ*%(filts_out_chan_dim) + b] = sum;
+            //out[i*KNP + NP*row + col] = 1;
+        }
+    }
+    //out[i*ooff + col* %(filts_out_chan_dim) + row] = 1; //acc;
+    //out[i*ooff + i*(PQ*%(in_img_dim)) + row*PQ*AA*%(in_img_dim) + col] = 1; // row major
+    //out[i*KNP + NP*row + col] = 1;
+
+  //for (int i = 0; i < 16; ++i)
+    //out[GLOB_ID_1D*16+i] = 1;
+    /*for (int m=0; m < %(filts_out_chan_dim); m++) {
+        for (int n=0; n< %(in_img_dim) * TP; n++) {
+            float acc = 0.0f;
+            for (int k=0; k < %(filts_in_chan_dim); k++) {
+                acc += filts[i*foff + k* %(filts_out_chan_dim) + m] * in[i*ioff + n* %(filts_in_chan_dim) + k];
+            }
+            out[i*ooff + n* %(filts_out_chan_dim) + m] = acc;
+        }
+    }*/
+
+}

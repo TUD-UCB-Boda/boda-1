@@ -1,0 +1,58 @@
+CUCL_GLOBAL_KERNEL void %(rtc_func_name)(
+    GASQ float const * const in_ref, // CUCL IN img:chan:y:x
+    GASQ float * const in , // CUCL OUT img:chan:a1:a2
+    GASQ void const * const work) // CUCL REF l32a:l32b:l8a:l8b:l4a:l4b:l2a:gxl:gyl:gpl:gql:gkl:gcl:gncl:r:a:ul:pels_blk:out_chan_blk:pels_tile:out_chan_tile:pels:out_chan
+{
+  // dsaCUCL IX GRP_ID_1D work use_dims=gql:gpl:gncl
+  // dsaCUCL IX LOC_ID_1D work use_dims=l2a:l4a:l4b
+  // CUCL IX GLOB_ID_1D work use_dims=gql:gpl:gncl
+  int ii = GLOB_ID_1D; 
+  int g0 = ii / (%(w_Q)*%(w_C)*%(w_N));
+  int g1 = (ii %% (%(w_Q)*%(w_C)*%(w_N))) / (%(w_C)*%(w_N));
+  int g2 = (ii %% (%(w_C)*%(w_N))) / %(w_N);
+  int g3 = ii %% %(w_N);
+  size_t n = g3;
+  size_t c = g2;
+  size_t blockY = g0;
+  size_t blockX = g1;
+
+  if ((int) n >= %(w_N) || (int) c >= %(w_C) || blockY >= %(w_P) || blockX >= %(w_Q))
+    return;
+
+
+  int b = blockY * %(w_Q) + blockX;
+  int x = blockX * %(w_O); 
+  int y = blockY * %(w_O);
+
+  float d[%(w_A)][%(w_A)];
+  float Btd[%(w_A)][%(w_A)];
+  //float tmp[%(w_A)][%(w_A)];
+
+  const GASQ float *D = in_ref + c*(%(w_H)*%(w_W)) + x;
+
+  for (int i = 0; i < %(w_A); ++i) {
+    for (int j = 0; j < %(w_A); ++j) {
+      //d[i][j] = B[%(w_A)*j + i];
+      d[i][j] = D[(y+j)*%(w_W) + i];
+    }
+  }
+
+  //for (int i = 0; i < %(w_A); ++i) {
+    %(first_mul)
+
+  // Compute matrix multiplication tmp * G^T
+  //for (int i = 0; i < %(w_A); ++i) {
+    %(second_mul)
+
+  // extra writeback
+  GASQ float *Vt = in + c*%(w_P) + b + n*%(w_P)*%(w_C); 
+  int offx = %(w_A) * %(w_C) * %(w_P) * %(w_N); 
+  int offy = %(w_C) * %(w_P) * %(w_N); 
+  for (int i = 0; i < %(w_A); ++i) {
+    for (int j = 0; j < %(w_A); ++j) {
+      //Vt[offx*i + offy*j] = 1; //tmp[i][j];
+      in[i*(%(w_A)*%(w_C)*%(w_P)*%(w_Q)*%(w_N)) + j*(%(w_C)*%(w_P)*%(w_Q)*%(w_N)) + c*%(w_P)*%(w_Q) + n*%(w_P)*%(w_Q)*%(w_C) + b] = d[i][j];
+    }
+  }
+
+}

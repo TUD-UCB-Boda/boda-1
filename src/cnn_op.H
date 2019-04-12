@@ -4,7 +4,7 @@
 #include"conv_util.H"
 #include"geom_prim.H"
 
-namespace boda 
+namespace boda
 {
 
   struct op_tune_t : virtual public nesi // NESI(help="operation tuning parameters")
@@ -21,24 +21,28 @@ namespace boda
     uint32_t use_local_mem; //NESI(default=1,help="if 1, use local memory for sgemm (affects some cnn ops too, like k1conv)")
     uint32_t prof_variant; //NESI(default=0,help="if nonzero, run special experimental profiling variant")
     uint32_t vw; //NESI(default=8,help="vector width for simd variants")
+    uint32_t wots; //NESI(default=2,help="winograd output tile size")
+    uint32_t lu; //NESI(default=1,help="winograd unroll factor")
 
     // cnn-specific
     //uint32_t opt; //xNESI(default=1,help="if 1, choose optimized variant (cnn operations only)")
     uint32_t k1conv; //NESI(default=0,help="if 1, enable k1conv variant (cnn operations only)")
+    uint32_t wgconv; //NESI(default=0,help="if 1, enable wgconv variant (cnn operations only)")
+    uint32_t wfconv; //NESI(default=0,help="if 1, enable wfconv variant (cnn operations only)")
     uint32_t tconv; //NESI(default=0,help="if 1, enable tconv variant (cnn operations only). if 2, (force-)enable tconv in more cases.")
     u32_pt_t tconv_max_ksz;  //NESI(default="11:11",help="max kernel size to use for tconv")
     uint32_t ipconv; //NESI(default=0,help="if 1, enable ipconv variant (cnn operations only)")
 
   };
-  typedef vector< op_tune_t > vect_op_tune_t; 
-  typedef shared_ptr< op_tune_t > p_op_tune_t; 
+  typedef vector< op_tune_t > vect_op_tune_t;
+  typedef shared_ptr< op_tune_t > p_op_tune_t;
   typedef vector< p_op_tune_t > vect_p_op_tune_t;
   typedef map< string, op_tune_t > map_str_op_tune_t;
 
-  string const k1conv_str = "k1conv"; 
-  string const k1conv_simd_str = "k1conv_simd"; 
-  string const tconv_str = "tconv"; 
-  string const ipconv_str = "ipconv"; 
+  string const k1conv_str = "k1conv";
+  string const k1conv_simd_str = "k1conv_simd";
+  string const tconv_str = "tconv";
+  string const ipconv_str = "ipconv";
   string const conv_str = "conv";
   string const conv_simd_str = "conv_simd";
 

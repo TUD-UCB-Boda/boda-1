@@ -1,0 +1,43 @@
+CUCL_GLOBAL_KERNEL void %(rtc_func_name)( GASQ float const * const filts_ref, // CUCL IN out_chan:in_chan:y:x
+					  //GASQ float * const filts ) // CUCL OUT CUCL IN out_chan:in_chan:y:x
+					  GASQ float * const filts, // CUCL OUT out_chan:in_chan:a1:a2
+                      GASQ void const * const work) // CUCL REF l32a:l32b:l8a:l8b:l4a:l4b:l2a:gxl:gyl:gpl:gql:gkl:gcl:gncl:r:a:ul:pels_blk:out_chan_blk:pels_tile:out_chan_tile:pels:out_chan
+{
+	// ddCUCL IX GRP_ID_1D work use_dims=gkl:gcl
+	// ddCUCL IX LOC_ID_1D work use_dims=l8a:l4a
+	// CUCL IX GLOB_ID_1D work use_dims=gkl:gcl
+
+	size_t k = GLOB_ID_1D %% %(w_K);
+	size_t c = GLOB_ID_1D / %(w_K);
+
+	if ((int) k >= %(w_K) || (int) c >= %(w_C))
+		 return;
+
+	float g[%(w_R)][%(w_R)];
+	float Gg[%(w_A)][%(w_R)];
+	float tmp[%(w_A)][%(w_A)];
+
+	const GASQ float *B = filts_ref + (k * %(w_C) + c) * %(w_R) * %(w_R);
+
+	for (int i = 0; i < %(w_R); ++i) {
+		for (int j = 0; j < %(w_R); ++j) {
+			g[i][j] = B[%(w_R)*j + i];
+		}
+	}
+
+	//for (int i = 0; i < %(w_R); ++i) {
+		 %(first_mul)
+
+	// Compute matrix multiplication tmp * G^T
+	//for (int i = 0; i < %(w_A); ++i) {
+		 %(second_mul)
+
+	// extra writeback
+	for (int i = 0; i < %(w_A); ++i) {
+		for (int j = 0; j < %(w_A); ++j) {
+		    GASQ float *Ut = filts + i*%(w_A)*%(w_K)*%(w_C) + k* %(w_C) + c;
+			Ut[%(w_K)*%(w_C)*j] = tmp[i][j];
+      //filts[i*%(w_A)*%(w_K)*%(w_C) + k*%(w_C) + c + %(w_K)*%(w_C)*j] = 1;
+		}
+	}
+}

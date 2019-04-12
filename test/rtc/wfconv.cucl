@@ -1,0 +1,251 @@
+CUCL_GLOBAL_KERNEL void %(rtc_func_name) (
+    GASQ float * const filts, // CUCL IN in_chan:y:x:out_chan
+    //GASQ float const * const filts, // CUCL IN out_chan:in_chan:y:x
+    GASQ float const * const biases, // CUCL IN out_chan
+    GASQ float * const in, // CUCL IN chan:y:x:img
+    GASQ float const * const in_ref, // CUCL REF img:chan:y:x
+    //GASQ float const * const in, // CUCL IN img:chan:y:x
+    GASQ void const * const in_pad, // CUCL REF y:x
+    //GASQ float * out, // CUCL OUT chan:y:x:img
+    //GASQ float * out_ref, // CUCL REF img:chan:y:x
+    GASQ float * out, // CUCL OUT img:chan:y:x
+    GASQ void const * const work // CUCL REF wino_tpb:a:o:ul:wino_tp:wino_tq:wino_tk:wino_tn:filts_work:img_work:out_work:pels_blk:out_chan_blk:pels_tile:out_chan_tile:pels:out_chan
+
+    ) {
+  // CUCL IX GRP_ID_1D work use_dims=wino_tp:wino_tq:wino_tk:wino_tn
+  // CUCL IX LOC_ID_1D work use_dims=wino_tpb
+  int TP = %(win_TP);
+  int TQ = %(win_TQ);
+  int TK = %(win_TK);
+  int TN = %(win_TN);
+  %(superblocking)
+
+    int ii = GRP_ID_1D;
+  int g0 = ii / (TQ*TK*TN);                                                    
+  int g1 = (ii %% (TQ*TK*TN)) / (TK*TN);                                        
+  int g2 = (ii %% (TK*TN)) / TN;                                                
+  int g3 = ii %% TN;
+
+  int tp = g0;
+  int tq = g1;
+
+  int LOC_ID_1D32 = LOC_ID_1D & 31;                           // LOC_ID_1D32 = LOC_ID_1D %% 32
+  int c = (LOC_ID_1D & 0x60) >> 5; // 01100000          // c = LOC_ID_1D / 32 .... nope.
+  int ci = c - (%(filts_in_chan_dim) & 3 ? 4 - (%(filts_in_chan_dim) & 3) : 0);         // ci = c - (C %% 4 ? 4 - (C %% 4) : 0)
+  tp = (tp << TPwidth) + ((LOC_ID_1D & TPmask) >> TPshift); // tp = tp + LOC_ID_1D
+  tq = (tq << TQwidth) + ((LOC_ID_1D & TQmask) >> TQshift); // tq = tq + LOC_ID_1D
+  int h = (tp << 1) - %(in_pad_y_dim),    // h = tp * 2
+      w = (tq << 1) - %(in_pad_x_dim);    // w = tq * 2
+  int n = (g3 << Nwidth) + (LOC_ID_1D & Nmask); // n = (group(2) * 32 + bn) + (LOC_ID_1D %% 32) 
+  int k = (g2 << 5) + LOC_ID_1D32;              // k = (group(1)) * 32 + (LOC_ID_1D %% 32)
+
+  LOCSHAR_MEM float SM[8 * %(w_A)*%(w_A) * 32];
+  //LOCSHAR_MEM float *SMV = SM + ((LOC_ID_1D & 0xf0) << 1) + (LOC_ID_1D & 0x3);   // SM + (LOC_ID_1D / 16 * 16)*2  + (LOC_ID_1D %% 4)
+  LOCSHAR_MEM float *SMV;
+  SMV = SM + (LOC_ID_1D / (%(w_A) * %(w_A)) * (%(w_A) * %(w_A)))*2  + (LOC_ID_1D %% 4);
+  // LOCSHAR_MEM float *SMU = SM + 4 * 16 * 32 + ((LOC_ID_1D & 0xf0) << 1) + ((LOC_ID_1D & 0xc) >> 2); 
+  LOCSHAR_MEM float *SMU;
+  SMU = SM + 4 * %(w_A) * %(w_A) * 32 + (LOC_ID_1D / (%(w_A) * %(w_A)) * %(w_A) * %(w_A))*2 + (LOC_ID_1D %% (%(w_A)*%(w_A))) / 4;
+
+  //nt o512 = 32 * %(w_A) * %(w_A);
+  int o512 = 512;
+  const int aa = %(w_A) * %(w_A);
+
+  // TODO might be 8 instead of hAA
+  //float r[%(halfAA)][%(halfAA)], rA[%(halfAA)], rB[%(halfAA)];
+  float r[%(w_rSize)][%(w_rSize)], rA[%(w_rSize)], rB[%(w_rSize)];
+  for (int i = 0; i < %(w_rSize); ++i)
+    for (int j = 0; j < %(w_rSize); ++j)
+      r[i][j] = 0;
+
+  if (LOC_ID_1D < 128) { // image transform
+    float d[%(w_A)][%(w_A)], Btd[%(w_A)][%(w_A)];
+
+    bool valids[%(w_A)][%(w_A)];
+    for (int i = 0; i < %(w_A); ++i)
+      for (int j = 0; j < %(w_A); ++j)
+        valids[i][j] = n < %(in_img_dim) && 0 <= h + i && h + i < %(in_y_dim) && 0 <= w + j && w + j < %(in_x_dim);
+
+    GASQ float *imgOff = in + ((ci * %(in_y_dim) + h) * %(in_y_dim) + w) * %(in_img_dim) + n;
+
+    //LOCSHAR_MEM float *SWMV= SM + c * 16 * 32 + LOC_ID_1D32;
+    LOCSHAR_MEM float *SWMV;
+    SWMV = SM + c * %(halfAA)*2 * 32 + LOC_ID_1D32;
+    do {
+      for (int i = 0; i < %(w_A); ++i)
+        for (int j = 0; j < %(w_A); ++j) 
+          d[i][j] = ci >= 0 && valids[i][j] ? imgOff[(i * %(in_x_dim) + j) * %(in_img_dim)] : 0;
+      // B^T * d * B
+
+      //for (int i = 0; i < %(w_A); ++i) {
+        %(trans_i1)
+      //}
+
+      //for (int i = 0; i < %(w_A); ++i) {
+        %(trans_i2)
+      //}
+
+      for (int i = 0; i < %(w_A); ++i)
+        for (int j = 0; j < %(w_A); ++j)
+          SWMV[(i * %(w_A) + j) * 32] = d[i][j];
+
+      BARRIER_SYNC;
+      for (int l = 0; l < %(w_A); ++l) { // l == alpha? TODO
+        for (int i = 0; i < %(w_rSize); ++i) {
+          rA[i] = SMU[l * 512 + i * 4]; // alpha*alpha*32, no 32/2 * 32
+          rB[i] = SMV[l * 512 + i * 4]; 
+        }
+        for (int i = 0; i < %(w_rSize); ++i) 
+          for (int j = 0; j < %(w_rSize); ++j) {
+            r[i][j] += rA[i] * rB[j]; 
+          }
+      }
+
+      // TODO manche 4 replacements können auch channels sein. 
+
+
+      BARRIER_SYNC;
+
+      ci += 4;
+      imgOff += 4 * %(in_y_dim) * %(in_x_dim) * %(in_img_dim);
+    } while (ci < %(filts_in_chan_dim));
+  } else { // filter transform
+    float g[%(w_R)][%(w_R)], tmp[%(w_A)][%(w_A)], Gg[%(w_A)][%(w_R)];
+    float t0, t1; 
+
+    bool valid = k < %(out_chan_dim);
+
+    GASQ float *filtOff = filts + ci * %(w_R) * %(w_R) * %(out_chan_dim) + k;
+    LOCSHAR_MEM float *SWMU;
+    SWMU = SM + (c + 4) * %(halfAA)*2 * 32 + LOC_ID_1D32;
+    int dboffset = (c + 4) * %(halfAA)*2 * 32 + LOC_ID_1D32;
+    //GASQ float *filtOff = filts + ci * 3 * 3 * %(out_chan_dim) + k;
+    //LOCSHAR_MEM float *SWMU= SM + (c + 4) * 16 * 32 + LOC_ID_1D32;
+    do {
+      for (int i = 0; i < %(w_R); ++i)
+        for (int j = 0; j < %(w_R); ++j)
+          g[i][j] = ci >= 0 && valid? filtOff[(i * %(w_R) + j) * %(out_chan_dim)] : 0;
+
+      //for (int i = 0; i < %(w_R); ++i) {
+        %(trans_f1)
+      //}
+
+      //for (int i = 0; i < %(w_A); ++i) {
+        %(trans_f2)
+      //}
+
+      for (int i = 0; i < %(w_A); ++i) {
+        for (int j = 0; j < %(w_A); ++j) {
+          SWMU[(i * %(w_A) + j) * 32] = tmp[i][j];
+          int dboffset2 = dboffset + (i * %(w_A) + j) * 32;
+          //printf("Accessing %%d\n", dboffset);
+        }
+      }
+
+      BARRIER_SYNC;
+
+      for (int l = 0; l < %(w_A); ++l) { // FIXME channels, not A
+        for (int i = 0; i < %(w_rSize); ++i) {
+          rA[i] = SMU[l * 512 + i * 4]; // TODO 512, 4?
+          rB[i] = SMV[l * 512 + i * 4];
+        }
+        for (int i = 0; i < %(w_rSize); ++i) {
+          for (int j = 0; j < %(w_rSize); ++j) {
+            r[i][j] += rA[i] * rB[j];
+          }
+        }
+      }
+
+      BARRIER_SYNC;
+
+      ci += 4;
+      filtOff += 4 * %(w_R) * %(w_R) * %(out_chan_dim);
+    } while (ci < %(filts_in_chan_dim));
+  }
+
+  // inverse transform
+  {
+    //LOCSHAR_MEM float *pWSM = SM + ((LOC_ID_1D & 0x0c) << 7) + ((LOC_ID_1D & 0xf0) << 1) + (LOC_ID_1D & 0x03);
+
+    //working:
+    const int AA = %(w_A)*%(w_A);
+    //LOCSHAR_MEM float *pWSM = SM + ((LOC_ID_1D / 4) %% 4) * o512 + ((LOC_ID_1D / 16) %% 16) * 32 + (LOC_ID_1D %% 4); // sth here?
+    //printf("pRSM: %%d\n", ((LOC_ID_1D / 4) %% 4) * (aa*32) + ((LOC_ID_1D / 16) %% 16) * 32 + (LOC_ID_1D %% 4));
+
+    LOCSHAR_MEM float *pWSM;
+    pWSM = SM + ((LOC_ID_1D / 4) %% 4) * (aa*32) + ((LOC_ID_1D / 16) %% 16) * 32 + (LOC_ID_1D %% 4); // sth here?
+    //LOCSHAR_MEM float *pWSM = SM;
+    //LOCSHAR_MEM float *pWSM = SM + ((LOC_ID_1D / 4) %% 4) * o512 + ((LOC_ID_1D / AA) %% AA) * 32 + (LOC_ID_1D %% 4); // sth here?
+
+    //LOCSHAR_MEM float *pWSM = SM + ((LOC_ID_1D & 0x0c) << 7) + ((LOC_ID_1D & 0xf0) << 1) + (LOC_ID_1D & 0x03);
+    //LOCSHAR_MEM float *pRSM = SM + ((LOC_ID_1D & 0xe0) << 4) + LOC_ID_1D32;
+    //LOCSHAR_MEM float *pRSM = SM + (LOC_ID_1D / 32 * o512) + LOC_ID_1D32;
+    //LOCSHAR_MEM float *pRSM = SM + (LOC_ID_1D / 32 * (aa*32)) + LOC_ID_1D32;
+    LOCSHAR_MEM float *pRSM;
+    pRSM = SM + (LOC_ID_1D / 32 * (aa*32)) + LOC_ID_1D32;
+
+    int oh = h + %(in_pad_y_dim), ow = w + %(in_pad_x_dim), on = n;
+    int ok = k - LOC_ID_1D32 + (LOC_ID_1D / 32); //((LOC_ID_1D & 0xe0) >> 5); // TODO possibly wrong
+    //int ok = k - LOC_ID_1D32 + ((LOC_ID_1D & 0xe0) >> 5);
+    GASQ float *pO = out+ ((ok * %(out_y_dim) + oh) * %(out_x_dim) + ow) * %(in_img_dim) + on;
+    float rl;
+
+    bool valids[%(w_O)][%(w_O)];
+    int ok_t = ok;
+    for (int i = 0; i < %(w_O); ++i) {
+      for (int j = 0; j < %(w_O); ++j) {
+        valids[i][j] = on < %(in_img_dim) && 0 <= oh + i && oh + i < %(out_y_dim) && 0 <= ow + j && ow + j < %(out_x_dim);
+      }
+    }
+
+    //printf(" %%d\n", ((LOC_ID_1D / 4) %% 4) * 512 + ((LOC_ID_1D / 16) %% 16) * 32 + (LOC_ID_1D %% 4));
+
+    for (int l = 0; l < 4; ++l) { // always 4 (32/8)
+      for (int i = 0; i < 2; ++i) {
+        for (int j = 0; j < %(w_rSize); ++j) {
+          pWSM[(i << 11) + (j << 2)] = r[l * 2 + i][j];
+          //r[l * 2 + i][j] = 0;
+          //r[11][j] = 0;
+          //pWSM[i * 2048 + j * 4]
+          //pWSM[(i * 8*32*(%(w_A)*%(w_A)/%(w_O))) + (j * %(w_A))] = r[l * %(w_O) + i][j]; // FIXME
+          //pWSM[(i * 8*32*(AA/2)) + (j * %(w_A))] = r[l * 2 + i][j]; // FIXME
+          //pWSM[(i * 8*%(halfAA)*32) + (j * %(w_A))] = 0;//r[l * %(w_O) + i][j]; // FIXME
+          //pWSM[(i * 8*%(halfAA)*32) + (j * %(w_A))] = r[l * %(w_O) + i][j]; // FIXME
+        }
+      }
+
+      BARRIER_SYNC;
+
+      //float m[%(w_A)][%(w_A)], Atm[%(w_A)][%(w_O)], tmp[%(w_O)][%(w_O)];
+      float m[%(w_A)][%(w_A)], Atm[%(w_O)][%(w_A)], tmp[%(w_O)][%(w_O)];
+      for (int i = 0; i < %(w_A); ++i) {
+        for (int j = 0; j < %(w_A); ++j) {
+          m[i][j] =  pRSM[(i * %(w_A) + j) * 32];
+        }
+      }
+
+      BARRIER_SYNC;
+
+
+      //for(int i = 0; i < %(w_A); i++) { 
+        %(trans_o1)
+      //}
+      //for(int i = 0; i < %(w_O); i++) {
+        %(trans_o2)
+      //}
+
+      for (int i = 0; i < 2; ++i) {
+        for (int j = 0; j < 2; ++j) {
+          if (ok < %(out_chan_dim) && valids[i][j]) {
+            rl = tmp[i][j] + biases[ok];
+            // pO[(i * %(out_x_dim) + j) * %(in_img_dim)] = (rl >= 0) ? rl : 0.f;
+            out[((on*%(out_chan_dim)+(ok_t+8*l)) * %(out_y_dim) + oh + i) * %(out_x_dim) + ow +j] = rl >= 0 ? rl : 0;
+          }
+        }
+      }
+      ok += 8;
+      pO += 8 * %(out_y_dim) * %(out_x_dim) * %(in_img_dim);
+    }
+  }
+}
+
