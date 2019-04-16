@@ -45,6 +45,8 @@ namespace boda
   string const ipconv_str = "ipconv";
   string const conv_str = "conv";
   string const conv_simd_str = "conv_simd";
+  string const wgconv_str = "wgconv";
+  string const wfconv_str = "wfconv";
 
   inline bool is_k1_or_t_or_reg_conv( string const & cts ) { return (cts==k1conv_str) || (cts==tconv_str) || (cts==conv_str); }
 

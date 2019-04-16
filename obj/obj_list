@@ -198,3 +198,4 @@ pugixml.o
 lodepng.o 
 boda_help.o
 boda.o
+generator.o

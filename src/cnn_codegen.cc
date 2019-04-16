@@ -3,10 +3,13 @@
 
 #include"rtc_func_gen.H"
 #include"geom_prim.H"
+#include"generator.H"
 
 namespace boda
 {
   struct cnn_custom_codegen_t : public custom_codegen_t {
+
+    tc_gen *tc = nullptr;
 
     virtual void gen_op( rtc_call_gen_t * rcg, string const & op_name ) {
       // *** custom codegen hooks ***
